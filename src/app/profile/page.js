@@ -9,7 +9,7 @@ import { FileUpload } from '@/components/ui/file-upload';
 import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = ""
 
 function ProfilePage() {
   const { toast } = useToast();

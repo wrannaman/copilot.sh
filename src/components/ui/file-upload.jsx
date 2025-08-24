@@ -15,7 +15,7 @@ export function FileUpload({ onUploadSuccess, accept = "*/*", maxSize = 10 * 102
   const fileInputRef = useRef(null);
   const { toast } = useToast();
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+  const apiUrl = ""
 
   const getToken = () => {
     if (typeof window !== 'undefined') {

@@ -9,7 +9,7 @@ import { useToast } from '@/components/toast-provider';
 
 export default function SnowflakeQueryDialog({ item }) {
   const { token } = useAuth();
-  const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001', []);
+  const apiUrl = ""
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);

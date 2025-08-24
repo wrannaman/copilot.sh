@@ -11,7 +11,7 @@ import { useToast } from '@/components/toast-provider';
 export default function SnowflakeBrowseDialog({ item, trigger }) {
   const { token } = useAuth();
   const { toast } = useToast();
-  const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001', []);
+  const apiUrl = ""
 
   const [open, setOpen] = useState(false);
   const [databases, setDatabases] = useState([]);

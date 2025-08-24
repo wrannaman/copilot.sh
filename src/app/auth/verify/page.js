@@ -15,7 +15,6 @@ function VerifyContent() {
   const searchParams = useSearchParams();
   const { verifyToken, user } = useAuth();
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
   const token = searchParams.get("token");
 
   useEffect(() => {

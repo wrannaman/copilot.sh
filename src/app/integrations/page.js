@@ -18,7 +18,7 @@ import SnowflakeBrowseDialog from '@/components/integrations/snowflake/BrowseDia
 
 function EditIntegrationButton({ item, onSaved }) {
   const { token } = useAuth();
-  const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001', []);
+  const apiUrl = ``
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -157,7 +157,7 @@ function StatusBadge({ status }) {
 function IntegrationsPage() {
   const { token } = useAuth();
   const { toast } = useToast();
-  const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001', []);
+  const apiUrl = ""
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
