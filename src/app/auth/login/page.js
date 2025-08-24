@@ -56,7 +56,7 @@ export default function LoginPage() {
       <header className="border-b border-border bg-card">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-semibold text-foreground hover:text-foreground/80 transition-colors">
-            SecReq
+            Copilot.sh
           </Link>
           <ModeToggle />
         </div>
@@ -67,7 +67,7 @@ export default function LoginPage() {
         <div className="max-w-md mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-foreground mb-4">
-              Welcome to SecReq
+              Welcome to Copilot.sh
             </h1>
             <p className="text-muted-foreground">
               Sign in to access your security questionnaire workspace

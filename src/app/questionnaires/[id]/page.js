@@ -290,7 +290,7 @@ export default function QuestionnaireWorkbenchPage() {
       const supabase = createClient();
       try {
         const prefix = `questionnaires/${id}/versions/`;
-        const { data, error } = await supabase.storage.from('secreq').list(prefix, { limit: 100 });
+        const { data, error } = await supabase.storage.from('copilot.sh').list(prefix, { limit: 100 });
         if (error) throw error;
         const items = (data || []).filter(f => f.name.endsWith('.xlsx')).sort((a, b) => b.name.localeCompare(a.name));
         const latest = items[0];
@@ -300,7 +300,7 @@ export default function QuestionnaireWorkbenchPage() {
             throw new Error('No saved versions or original file path found');
           }
           const { data: sig, error: sigErr } = await supabase.storage
-            .from('secreq')
+            .from('copilot.sh')
             .createSignedUrl(questionnaire.original_file_path, 60 * 15);
           if (sigErr) throw sigErr;
           console.log('[Workbench] No versions yet; loading original upload', questionnaire.original_file_name);
@@ -312,7 +312,7 @@ export default function QuestionnaireWorkbenchPage() {
           setTimeout(() => { suppressDirtyRef.current = false }, 1200);
           return;
         }
-        const { data: sig, error: sigErr } = await supabase.storage.from('secreq').createSignedUrl(prefix + latest.name, 60 * 15);
+        const { data: sig, error: sigErr } = await supabase.storage.from('copilot.sh').createSignedUrl(prefix + latest.name, 60 * 15);
         if (sigErr) throw sigErr;
         console.log('[Workbench] Initial auto-load of latest version', latest.name);
         suppressDirtyRef.current = true;
@@ -332,7 +332,7 @@ export default function QuestionnaireWorkbenchPage() {
     try {
       const supabase = createClient();
       const prefix = `questionnaires/${id}/versions/`;
-      const { data, error } = await supabase.storage.from('secreq').list(prefix, { limit: 100 });
+      const { data, error } = await supabase.storage.from('copilot.sh').list(prefix, { limit: 100 });
       if (error) throw error;
       const items = (data || []).filter(f => f.name.endsWith('.xlsx')).sort((a, b) => b.name.localeCompare(a.name)).slice(0, 10);
       setRecentVersions(items.map(f => ({ name: f.name, path: prefix + f.name })));
@@ -529,7 +529,7 @@ export default function QuestionnaireWorkbenchPage() {
                                     onClick={async () => {
                                       try {
                                         const supabase = createClient();
-                                        const { data: sig, error } = await supabase.storage.from('secreq').createSignedUrl(v.path, 60 * 15)
+                                        const { data: sig, error } = await supabase.storage.from('copilot.sh').createSignedUrl(v.path, 60 * 15)
                                         if (error) throw error
                                         console.log('[Workbench] Loading version from dropdown', v.name)
                                         suppressDirtyRef.current = true

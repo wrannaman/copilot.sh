@@ -32,7 +32,7 @@ export async function POST(request) {
 
     const html = `
       <div style="font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial">
-        <h2>You\'re invited to collaborate on ${invite.organizations?.name || 'SecReq'}</h2>
+        <h2>You\'re invited to collaborate on ${invite.organizations?.name || 'Copilot.sh'}</h2>
         <p>You have been invited with the role <strong>${invite.role}</strong>.</p>
         <p>This invite will expire on <strong>${new Date(invite.expires_at).toLocaleString()}</strong>.</p>
         <p><a href="${acceptUrl}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Accept Invitation</a></p>
@@ -43,7 +43,7 @@ export async function POST(request) {
     const { error: sendError } = await resend.emails.send({
       from: 'Noco <no-reply@hey.noco.io>',
       to: [invite.email.toLowerCase().trim()],
-      subject: `You're invited to collaborate on ${invite.organizations?.name || 'SecReq'}`,
+      subject: `You're invited to collaborate on ${invite.organizations?.name || 'Copilot.sh'}`,
       html,
     })
 

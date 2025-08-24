@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "SecReq",
+  title: "Copilot.sh",
   description: "AI-powered security questionnaire platform",
 };
 

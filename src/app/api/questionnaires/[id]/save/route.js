@@ -16,7 +16,7 @@ export async function POST(req, { params }) {
     const supabase = await createServiceClient()
     let wb = new ExcelJS.Workbook()
     if (basePath) {
-      const { data: file, error: dlErr } = await supabase.storage.from('secreq').download(basePath)
+      const { data: file, error: dlErr } = await supabase.storage.from('copilot.sh').download(basePath)
       if (dlErr) throw dlErr
       const arrayBuf = await file.arrayBuffer()
       await wb.xlsx.load(arrayBuf)
@@ -42,7 +42,7 @@ export async function POST(req, { params }) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const path = `questionnaires/${id}/versions/${timestamp}.xlsx`
     const { error } = await supabase.storage
-      .from('secreq')
+      .from('copilot.sh')
       .upload(path, Buffer.from(buffer), {
         upsert: false,
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

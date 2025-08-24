@@ -137,7 +137,7 @@ export function DatasetFileUpload({ datasetId, datasetName, onUploadComplete }) 
           console.log('📤 [UPLOAD] Uploading to storage:', { filePath, fileType: file.type, fileSize: file.size });
 
           const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('secreq')
+            .from('copilot.sh')
             .upload(filePath, file, {
               contentType: file.type,
               upsert: false

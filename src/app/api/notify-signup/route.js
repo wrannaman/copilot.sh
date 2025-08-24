@@ -24,7 +24,7 @@ export async function POST() {
 
     const email = data.user.email || 'unknown'
     const payload = {
-      text: `secreq - ${email} signed up`
+      text: `copilot.sh - ${email} signed up`
     }
 
     const res = await fetch(slackWebhookUrl, {

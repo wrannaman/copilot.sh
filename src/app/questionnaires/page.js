@@ -193,7 +193,7 @@ function QuestionnairesPageContent() {
 
       // Upload file
       const { error: uploadError } = await supabase.storage
-        .from('secreq')
+        .from('copilot.sh')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false,

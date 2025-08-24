@@ -47,14 +47,14 @@ export async function POST(request) {
     // Download file from storage
     console.log('💾 [PROCESS-FILE] Downloading file from storage:', filePath)
     const { data: fileData, error: downloadError } = await supabase.storage
-      .from('secreq')
+      .from('copilot.sh')
       .download(filePath)
 
     if (downloadError) {
       console.error('❌ [PROCESS-FILE] Storage download failed:', {
         error: downloadError,
         filePath,
-        bucket: 'secreq'
+        bucket: 'copilot.sh'
       })
       throw new Error(`Failed to download file: ${downloadError.message}`)
     }

@@ -11,7 +11,7 @@ export async function POST(req, { params }) {
 
     // Load original workbook from storage to preserve formatting/styles
     const supabase = await createServiceClient()
-    const { data: file, error: dlErr } = await supabase.storage.from('secreq').download(basePath)
+    const { data: file, error: dlErr } = await supabase.storage.from('copilot.sh').download(basePath)
     if (dlErr) throw dlErr
     const arrayBuf = await file.arrayBuffer()
     const wb = new ExcelJS.Workbook()

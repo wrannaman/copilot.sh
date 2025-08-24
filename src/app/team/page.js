@@ -132,7 +132,7 @@ function TeamPageContent() {
               const filePath = pathMatch ? pathMatch[0] : orgData.logo_url;
 
               const { data: { signedUrl }, error: urlError } = await supabase.storage
-                .from('secreq')
+                .from('copilot.sh')
                 .createSignedUrl(filePath, 60 * 60 * 24); // 24 hours
 
               if (!urlError && signedUrl) {
@@ -310,12 +310,12 @@ function TeamPageContent() {
       // Delete existing logo if it exists
       if (orgLogoUrl) {
         const existingPath = orgLogoUrl.split('/').slice(-2).join('/');
-        await supabase.storage.from('secreq').remove([existingPath]);
+        await supabase.storage.from('copilot.sh').remove([existingPath]);
       }
 
       // Upload new logo
       const { error: uploadError } = await supabase.storage
-        .from('secreq')
+        .from('copilot.sh')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: true,
@@ -326,7 +326,7 @@ function TeamPageContent() {
 
       // Get signed URL (24 hour expiry)
       const { data: { signedUrl }, error: urlError } = await supabase.storage
-        .from('secreq')
+        .from('copilot.sh')
         .createSignedUrl(filePath, 60 * 60 * 24); // 24 hours
 
       if (urlError) throw urlError;
@@ -351,7 +351,7 @@ function TeamPageContent() {
     try {
       // Remove from storage
       const existingPath = orgLogoUrl.split('/').slice(-2).join('/');
-      await supabase.storage.from('secreq').remove([existingPath]);
+      await supabase.storage.from('copilot.sh').remove([existingPath]);
 
       setOrgLogoUrl('');
       toast.success('Logo removed');

@@ -155,7 +155,7 @@ function DashboardContent() {
               )}
               <div>
                 <h1 className="text-3xl font-bold text-foreground">
-                  {currentOrganization?.org_name || currentOrganization?.name || 'SecReq'} Dashboard
+                  {currentOrganization?.org_name || currentOrganization?.name || 'Copilot.sh'} Dashboard
                 </h1>
               </div>
             </div>
@@ -181,7 +181,7 @@ function DashboardContent() {
 
                       const { error: uploadError } = await supabase
                         .storage
-                        .from('secreq')
+                        .from('copilot.sh')
                         .upload(filePath, file, {
                           cacheControl: '3600',
                           upsert: false,
