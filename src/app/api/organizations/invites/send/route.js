@@ -12,8 +12,8 @@ export async function POST(request) {
     const supabase = await createServiceClient()
 
     const { data: invite, error } = await supabase
-      .from('organization_invites')
-      .select('id, email, role, token, organization_id, status, expires_at, organizations(name)')
+      .from('org_invites')
+      .select('id, email, role, token, organization_id, status, expires_at, org(name)')
       .eq('id', inviteId)
       .single()
 
@@ -32,7 +32,7 @@ export async function POST(request) {
 
     const html = `
       <div style="font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial">
-        <h2>You\'re invited to collaborate on ${invite.organizations?.name || 'Copilot.sh'}</h2>
+        <h2>You\'re invited to collaborate on ${invite.org?.name || 'Copilot.sh'}</h2>
         <p>You have been invited with the role <strong>${invite.role}</strong>.</p>
         <p>This invite will expire on <strong>${new Date(invite.expires_at).toLocaleString()}</strong>.</p>
         <p><a href="${acceptUrl}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Accept Invitation</a></p>
@@ -43,7 +43,7 @@ export async function POST(request) {
     const { error: sendError } = await resend.emails.send({
       from: 'Noco <no-reply@hey.noco.io>',
       to: [invite.email.toLowerCase().trim()],
-      subject: `You're invited to collaborate on ${invite.organizations?.name || 'Copilot.sh'}`,
+      subject: `You're invited to collaborate on ${invite.org?.name || 'Copilot.sh'}`,
       html,
     })
 

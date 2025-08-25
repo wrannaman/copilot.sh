@@ -55,36 +55,11 @@ function DashboardContent() {
   const loadDashboardData = async () => {
     const supabase = createClient()
     try {
-      // Load questionnaires
-      const { data: questionnaireData, error: qError } = await supabase
-        .from('questionnaires')
-        .select(`
-          *,
-          questionnaire_items(count)
-        `)
-        .eq('organization_id', currentOrganization.org_id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (qError) throw qError;
-      setQuestionnaires(questionnaireData || []);
-
-      // Load datasets
-      const { data: datasetData, error: dError } = await supabase
-        .from('datasets')
-        .select('*')
-        .eq('organization_id', currentOrganization.org_id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (dError) throw dError;
-      setDatasets(datasetData || []);
-
       // Calculate stats by questionnaire status
-      const totalQuestionnaires = questionnaireData?.length || 0;
-      const draftCount = questionnaireData?.filter(q => q.status === 'draft')?.length || 0;
-      const needsReviewCount = questionnaireData?.filter(q => q.status === 'needs_review')?.length || 0;
-      const completedCount = questionnaireData?.filter(q => q.status === 'completed')?.length || 0;
+      const totalQuestionnaires = []?.length || 0;
+      const draftCount = []?.filter(q => q.status === 'draft')?.length || 0;
+      const needsReviewCount = []?.filter(q => q.status === 'needs_review')?.length || 0;
+      const completedCount = []?.filter(q => q.status === 'completed')?.length || 0;
 
       setStats({
         totalQuestionnaires,

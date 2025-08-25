@@ -42,10 +42,10 @@ function HomeContent() {
         <section className="container mx-auto px-6 py-20 text-center">
           <div className="max-w-4xl mx-auto">
             <h2 className="text-5xl md:text-6xl font-bold text-foreground mb-6 tracking-tight">
-              Your life. Recorded. Searchable. <span className="text-primary">Yours.</span>
+              Your work. Recorded. Searchable. <span className="text-primary">Yours.</span>
             </h2>
             <p className="text-xl md:text-2xl text-foreground font-semibold leading-relaxed">
-              Copilot.sh is an open-source always-on recorder for work and life. Record in browser, sync with Google Calendar, and push structured digests to Notion or Google Docs.
+              Copilot.sh is an open‑source always‑on recorder for your work. Capture meetings and calls in the browser, sync with Google Calendar, and push structured digests to Notion or Google Docs.
             </p>
             <p className="text-base md:text-lg text-muted-foreground mt-4 mb-10 leading-relaxed">
               Humane Pin raised $200M — this one runs on a $40 Pi or your laptop.
@@ -74,7 +74,7 @@ function HomeContent() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Record</CardTitle>
-                  <CardDescription>Capture conversations in browser, mobile, or on a $40 Raspberry Pi puck.</CardDescription>
+                  <CardDescription>Capture meetings and calls in the browser or on a $40 Raspberry Pi puck.</CardDescription>
                 </CardHeader>
               </Card>
               <Card className="border-border/50">
@@ -86,7 +86,7 @@ function HomeContent() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Push & Recall</CardTitle>
-                  <CardDescription>Auto-sync to Notion/Docs, or search your memory with calendar context.</CardDescription>
+                  <CardDescription>Auto‑sync to Notion/Docs, or search your work memory with calendar context.</CardDescription>
                 </CardHeader>
               </Card>
             </div>
@@ -129,10 +129,10 @@ function HomeContent() {
               <h3 className="text-3xl font-bold text-foreground">Features</h3>
             </div>
             <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Browser Recording</CardTitle><CardDescription>no setup, just press record.</CardDescription></CardHeader></Card>
+              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Browser Recording</CardTitle><CardDescription>one‑click capture in the browser.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Google Calendar Integration</CardTitle><CardDescription>tag sessions automatically to meetings.</CardDescription></CardHeader></Card>
-              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Custom Workflows</CardTitle><CardDescription>drag-and-drop: transcript → prompt filter → Notion/Docs/Email.</CardDescription></CardHeader></Card>
-              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Semantic Search</CardTitle><CardDescription>“what did I promise John last week?” → instant answer.</CardDescription></CardHeader></Card>
+              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Personal Workflows</CardTitle><CardDescription>drag-and-drop: transcript → prompt filter → Notion/Docs/Email.</CardDescription></CardHeader></Card>
+              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Semantic Search</CardTitle><CardDescription>“what did I promise in the last QBR?” → instant answer.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Notion & Google Docs Sync</CardTitle><CardDescription>push digests where you work.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Privacy by Design</CardTitle><CardDescription>open-source, local control, hard deletes.</CardDescription></CardHeader></Card>
             </div>
@@ -155,7 +155,7 @@ function HomeContent() {
                     <li>$40 hardware / free OSS</li>
                     <li>Yours forever</li>
                     <li>Private & local</li>
-                    <li>Extensible workflows</li>
+                    <li>Personal workflows</li>
                   </ul>
                 </CardContent>
               </Card>

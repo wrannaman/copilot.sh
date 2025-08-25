@@ -65,7 +65,7 @@ function TeamPageContent() {
 
       try {
         const { data, error } = await supabase
-          .from('organization_memberships')
+          .from('org_members')
           .select('*')
           .eq('organization_id', orgId);
 
@@ -262,7 +262,7 @@ function TeamPageContent() {
 
     try {
       const { error } = await supabase
-        .from('organization_memberships')
+        .from('org_members')
         .update({ role: newRole })
         .eq('id', selectedMember.id)
         .eq('organization_id', currentOrganization.org_id);

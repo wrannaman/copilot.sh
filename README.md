@@ -11,6 +11,11 @@
 **copilot.sh** is an **open-source ambient AI recorder**.  
 Capture conversations → tag with Google Calendar → filter with custom prompts → push to Notion/Docs → search everything later. Uses nextjs as a front end and supabase backend.
 
+- 🟢 Runs anywhere: browser, laptop, Raspberry Pi ($40 puck)  
+- 🔒 Privacy: data stays with you, not us  
+- 🛠 Hackable: bring your own LLM, extend with MCP plugins  
+- 🌍 Community-driven: GitHub stars = roadmap  
+
 ### ✨ Features
 - 🎙️ **Record in browser** (or run on a Raspberry Pi puck)  
 - 📅 **Calendar context** → sessions linked to your Google events  
@@ -18,7 +23,16 @@ Capture conversations → tag with Google Calendar → filter with custom prompt
 - 🗂️ **Push outputs** → Notion or Google Docs  
 - 🔍 **RAG search** → semantic + keyword recall across your life, filtered by calendar  
 - 🔌 **MCP server** → query your memory from inside ChatGPT  
-- 🛠️ **Open source** → MIT licensed, self-host or extend it however you want  
+
+## License
+
+Copilot.sh is source-available under the **Business Source License 1.1 (BUSL)**.  
+- ✅ Free for personal and self-hosted use.  
+- ❌ Not allowed to sell or host as a paid service without a commercial license.  
+- 🔓 Each release converts to Apache 2.0 after 4 years.  
+
+See [LICENSE.md](./LICENSE.md) for details.
+
 
 ---
 
@@ -43,6 +57,7 @@ Most “AI memory” tools are closed, expensive, or creepy.
 
 ```bash
 cp .env.example .env
+# create a google service account and download the credentials.json file into ./credentials/google.json
 ```
 
 .env.example has the variables you need to set.
@@ -52,3 +67,14 @@ npm i && npm run dev
 ```
 
 
+
+### Google service account 
+- Go to Google Cloud Console -> IAM & Admin -> Service Accounts 
+  1. Create service account 
+  2. Create key with Cloud Speech Client role 
+  3. Skip permissions 
+  4. Download the JSON file and put it in ./credentials/google.json
+
+## Disclaimer
+
+Copilot.sh records audio. Please use responsibly and comply with local laws around recording conversations.

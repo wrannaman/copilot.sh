@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 
 export const metadata = {
   title: "Copilot.sh",
-  description: "AI-powered security questionnaire platform",
+  description: "Always on recorder for your work",
 };
 
 export default function RootLayout({ children }) {

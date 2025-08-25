@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient as createServiceClient, createAuthClient } from '@/utils/supabase/server'
+import { createClient as createServiceClient, createClient } from '@/utils/supabase/server'
 
 export async function POST(request) {
   try {
@@ -9,7 +9,7 @@ export async function POST(request) {
     }
 
     // Get authenticated user from cookies/session
-    const authClient = await createAuthClient()
+    const authClient = await createClient()
     const { data: userData, error: userError } = await authClient.auth.getUser()
     if (userError || !userData?.user) {
       return NextResponse.json({ message: 'Authentication required' }, { status: 401 })
@@ -46,7 +46,7 @@ export async function POST(request) {
 
     // Add membership (upsert to handle retries)
     const { error: memberError } = await supabase
-      .from('organization_memberships')
+      .from('org_members')
       .upsert({
         user_id: authedUser.id,
         organization_id: invite.organization_id,

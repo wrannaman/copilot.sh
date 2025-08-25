@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createAuthClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 
 export async function POST() {
   try {
@@ -8,7 +8,7 @@ export async function POST() {
       return NextResponse.json({ message: 'Missing SLACK_WEBHOOK_URL' }, { status: 500 })
     }
 
-    const supabase = await createAuthClient()
+    const supabase = await createClient()
     const { data, error } = await supabase.auth.getUser()
     if (error || !data?.user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })

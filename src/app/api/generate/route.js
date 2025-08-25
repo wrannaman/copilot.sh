@@ -9,8 +9,7 @@ import { embedTexts } from '@/server/ai/embedding'
 /// const model = google.textEmbedding('gemini-embedding-001');
 export async function POST(req) {
   try {
-    const { prompt, organizationId, datasetIds = [], topK = 12 } = await req.json()
-    console.log("🚀 ~ datasetIds:", datasetIds)
+    const { prompt, sessionIds = [], topK = 12 } = await req.json()
     console.log('🧠 AI PROMPT OUTBOUND →', prompt)
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 })
@@ -18,35 +17,21 @@ export async function POST(req) {
 
     // Retrieve vector context from Supabase RPCs
     const supabase = await createServiceClient()
-    let documents = []
-    let queryEmbedding = []
-    if (Array.isArray(datasetIds) && datasetIds.length > 0) {
-      queryEmbedding = await embedTexts([prompt])
-      if (!queryEmbedding.length) throw new Error('embed failed: empty result')
-      const { data, error } = await supabase.rpc('match_document_chunks', {
-        query_embedding: queryEmbedding[0],
-        dataset_ids: datasetIds,
+    let chunks = []
+    if (Array.isArray(sessionIds) && sessionIds.length > 0) {
+      const [queryEmbedding] = await embedTexts([prompt])
+      if (!queryEmbedding || !Array.isArray(queryEmbedding)) throw new Error('embed failed: empty result')
+      const { data, error } = await supabase.rpc('match_session_chunks', {
+        query_embedding: queryEmbedding,
+        session_ids: sessionIds,
         match_threshold: 0.7,
-        match_count: Math.ceil(topK / 2)
+        match_count: topK
       })
-      if (!error && Array.isArray(data)) documents = data
-    }
-
-    // QA library context (org-level)
-    let qaLibrary = []
-    if (organizationId) {
-      const embedArr2 = queryEmbedding.length ? queryEmbedding : await embedTexts([prompt])
-      const { data, error } = await supabase.rpc('match_qa_library', {
-        query_embedding: embedArr2[0],
-        match_threshold: 0.75,
-        match_count: Math.ceil(topK / 2)
-      })
-      if (!error && Array.isArray(data)) qaLibrary = data
+      if (!error && Array.isArray(data)) chunks = data
     }
 
     const contextText = [
-      documents.length ? `DOCUMENT CONTEXT:\n${documents.map((d, i) => `[Doc ${i + 1}] ${d.file_name || ''}\n${d.content}\n`).join('\n')}` : '',
-      qaLibrary.length ? `QA LIBRARY:\n${qaLibrary.map((q, i) => `[QA ${i + 1}] Q: ${q.question}\nA: ${q.answer}\n`).join('\n')}` : ''
+      chunks.length ? `SESSION CONTEXT:\n${chunks.map((c, i) => `[Chunk ${i + 1}] (S${c.speaker_tag ?? '-'} @ ${c.start_time_seconds ?? '-'}s)\n${c.content}\n`).join('\n')}` : ''
     ].filter(Boolean).join('\n\n')
 
     const schema = z.object({
