@@ -67,13 +67,16 @@ npm i && npm run dev
 ```
 
 
+This app uses two Google credentials: a service account for transcription and an OAuth Web Client for per‑user Calendar; see `env.example` for all required variables.
+
+
 
 ### Google service account 
 - Go to Google Cloud Console -> IAM & Admin -> Service Accounts 
   1. Create service account 
   2. Create key with Cloud Speech Client role 
   3. Skip permissions 
-  4. Download the JSON file and put it in ./credentials/google.json
+  4. Download the JSON file and put it in ./credentials/google-service-account.json
 
 ## Disclaimer
 

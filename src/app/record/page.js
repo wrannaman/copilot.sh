@@ -8,12 +8,16 @@ import { useAuth } from "@/hooks/use-auth";
 import { Mic, Square, Loader2, WifiOff, RefreshCcw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
+import { AuthenticatedNav } from "@/components/layout/authenticated-nav";
 import { Slider } from "@/components/ui/slider";
 
 export default function RecordPage() {
   return (
     <AuthGuard>
-      <RecordContent />
+      <div className="min-h-screen bg-background">
+        <AuthenticatedNav />
+        <RecordContent />
+      </div>
     </AuthGuard>
   );
 }
@@ -21,18 +25,14 @@ export default function RecordPage() {
 function RecordContent() {
   const { user, currentOrganization, ensureOrganization } = useAuth();
 
-  // Debug auth state
-  console.log("[record] Auth state:", {
-    hasUser: !!user,
-    hasOrg: !!currentOrganization,
-    hasEnsureOrg: typeof ensureOrganization
-  });
+  // Debug auth state (removed to prevent console spam)
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const sseRef = useRef(null);
 
   // User intent to be recording; we auto-restart recorder/SSE while this is true
   const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false); // Reliable ref for immediate checks
   const [status, setStatus] = useState("idle"); // idle | recording | reconnecting | error | no-org
   const [isSending, setIsSending] = useState(false);
 
@@ -40,7 +40,6 @@ function RecordContent() {
   const [pendingText, setPendingText] = useState(""); // coalesced live text not yet committed
 
   const sessionIdRef = useRef("");
-  const clientSessionIdRef = useRef("");
   const lastActivityRef = useRef(Date.now());
   const heartbeatRef = useRef(null);
   const sseConnectedRef = useRef(false);
@@ -54,7 +53,8 @@ function RecordContent() {
   const maxRmsSinceLastChunkRef = useRef(0);
   const inflightRef = useRef(0);
   const chunkTimerRef = useRef(null);
-  const chunkLengthMsRef = useRef(5000);
+  const chunkLengthMsRef = useRef(4000); // Shorter chunks for more overlap
+  const overlapMsRef = useRef(1000); // 1 second overlap
   const isStartingRef = useRef(false);
   const retryCountRef = useRef(0);
   const maxRetriesRef = useRef(5);
@@ -62,6 +62,13 @@ function RecordContent() {
   const lastSuccessfulChunkRef = useRef(Date.now());
   const healthCheckRef = useRef(null);
   const recoveryInProgressRef = useRef(false);
+
+  // Helper to update both recording state and ref synchronously
+  function updateRecording(value) {
+    recordingRef.current = value;
+    setRecording(value);
+    console.debug("[record] updateRecording", { value });
+  }
 
   async function forceRecovery(reason = "unknown") {
     if (recoveryInProgressRef.current) return;
@@ -80,7 +87,7 @@ function RecordContent() {
       const delay = Math.min(retryDelayRef.current * Math.pow(2, retryCountRef.current), 10000);
       await new Promise(resolve => setTimeout(resolve, delay));
 
-      if (!recording) {
+      if (!recordingRef.current) {
         recoveryInProgressRef.current = false;
         return;
       }
@@ -160,7 +167,7 @@ function RecordContent() {
       } else {
         console.error("[record] max retries reached, stopping");
         setStatus("error");
-        setRecording(false);
+        updateRecording(false);
       }
     } finally {
       recoveryInProgressRef.current = false;
@@ -168,10 +175,20 @@ function RecordContent() {
   }
 
   function scheduleNextChunk() {
-    if (!recording) return;
-    if (isStartingRef.current) return;
-    if (recoveryInProgressRef.current) return;
+    if (!recordingRef.current) {
+      console.debug("[record] scheduleNextChunk: not recording, skipping", { recording, recordingRef: recordingRef.current });
+      return;
+    }
+    if (isStartingRef.current) {
+      console.debug("[record] scheduleNextChunk: already starting, skipping");
+      return;
+    }
+    if (recoveryInProgressRef.current) {
+      console.debug("[record] scheduleNextChunk: recovery in progress, skipping");
+      return;
+    }
 
+    console.debug("[record] scheduleNextChunk: starting new chunk");
     isStartingRef.current = true;
     try {
       const live = streamRef.current && streamRef.current.getTracks().some((t) => t.readyState === 'live');
@@ -184,7 +201,8 @@ function RecordContent() {
 
       setTimeout(() => {
         try {
-          if (!recording) {
+          if (!recordingRef.current) {
+            console.debug("[record] scheduleNextChunk timeout: not recording anymore");
             isStartingRef.current = false;
             return;
           }
@@ -200,6 +218,7 @@ function RecordContent() {
             }
           } catch (e) {
             console.error("[record] failed to start recorder", e?.message);
+            isStartingRef.current = false;
             forceRecovery("recorder-start-failed");
             return;
           }
@@ -216,6 +235,14 @@ function RecordContent() {
             }
             chunkTimerRef.current = null;
           }, chunkLengthMsRef.current);
+
+          // Schedule next chunk with overlap (start before current chunk ends)
+          setTimeout(() => {
+            if (recordingRef.current && !isStartingRef.current && !recoveryInProgressRef.current) {
+              console.debug("[record] scheduling overlapping chunk");
+              scheduleNextChunk();
+            }
+          }, chunkLengthMsRef.current - overlapMsRef.current);
 
         } catch (e) {
           console.error("[record] scheduleNextChunk error", e?.message);
@@ -338,7 +365,7 @@ function RecordContent() {
     sseRef.current = es;
     es.onopen = () => {
       sseConnectedRef.current = true;
-      if (recording) setStatus("recording");
+      if (recordingRef.current) setStatus("recording");
       console.debug("[record] SSE opened", { sessionId: id });
     };
     es.onmessage = (evt) => {
@@ -358,11 +385,11 @@ function RecordContent() {
     es.onerror = () => {
       sseConnectedRef.current = false;
       console.warn("[record] SSE error; will retry if recording");
-      if (recording) {
+      if (recordingRef.current) {
         setStatus("reconnecting");
         // quick retry to keep live
         setTimeout(() => {
-          if (sessionIdRef.current && recording) openSSE(sessionIdRef.current);
+          if (sessionIdRef.current && recordingRef.current) openSSE(sessionIdRef.current);
         }, 1000);
       } else {
         try { es.close(); } catch { }
@@ -394,8 +421,7 @@ function RecordContent() {
         const peakRms = maxRmsSinceLastChunkRef.current || 0;
         maxRmsSinceLastChunkRef.current = 0;
 
-        // Always schedule the next chunk first, even if we skip upload
-        scheduleNextChunk();
+        // With overlapping chunks, next chunk is already scheduled - no need to schedule here
 
         if (peakRms < (vadThresholdRef.current || 0)) {
           console.debug("[record] skip silent chunk", { peakRms, threshold: vadThresholdRef.current });
@@ -409,8 +435,7 @@ function RecordContent() {
           blob: e.data,
           size: e.data.size,
           timestamp: Date.now(),
-          peakRms,
-          clientSessionId: clientSessionIdRef.current
+          peakRms
         };
 
         // Retry logic for chunk upload
@@ -419,11 +444,10 @@ function RecordContent() {
             try {
               const form = new FormData();
               form.append("chunk", chunkData.blob, `chunk-${chunkData.timestamp}.webm`);
-              const qs = `?action=chunk&mode=stateless&clientSessionId=${encodeURIComponent(chunkData.clientSessionId)}`;
+              const qs = ``;
 
               console.debug("[record] uploading chunk", {
                 size: chunkData.size,
-                clientSessionId: chunkData.clientSessionId,
                 peakRms: chunkData.peakRms,
                 attempt: attempt + 1
               });
@@ -521,26 +545,24 @@ function RecordContent() {
   }
 
   async function startRecording() {
-    if (recording) return;
+    if (recordingRef.current) return;
 
     // Ensure user has an organization before starting
     try {
       await ensureOrganization();
-      console.log("[record] ✅ Organization ensured, starting recording...");
     } catch (e) {
       console.error("[record] ❌ Failed to ensure organization:", e?.message);
       setStatus("no-org");
       return;
     }
 
-    setRecording(true);
+    updateRecording(true);
     setStatus("reconnecting");
-    // Stateless: generate a client session id for persistence
-    try {
-      clientSessionIdRef.current = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
-    } catch {
-      clientSessionIdRef.current = Math.random().toString(36).slice(2);
-    }
+
+    // Initialize timing for health checks
+    lastSuccessfulChunkRef.current = Date.now();
+
+    // Using daily sessions - no need for client session ID
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -596,27 +618,47 @@ function RecordContent() {
       console.debug("[record] recording started");
     } catch {
       setStatus("error");
-      setRecording(false);
+      updateRecording(false);
       return;
     }
 
     // Enhanced health monitoring and recovery
     if (!healthCheckRef.current) {
       healthCheckRef.current = setInterval(() => {
-        if (!recording) return;
+        if (!recordingRef.current) return;
 
         const now = Date.now();
         const mr = mediaRecorderRef.current;
         const stream = streamRef.current;
 
-        // Check 1: Recorder state
-        if (!mr || mr.state !== "recording") {
-          console.warn("[record] health check: recorder not recording", {
-            hasRecorder: !!mr,
-            state: mr?.state
-          });
-          forceRecovery("health-check-recorder");
+        // Check 1: Recorder state - only worry if it's been inactive for too long
+        // Allow brief inactive periods during normal chunk transitions
+        if (!mr) {
+          console.warn("[record] health check: no recorder");
+          forceRecovery("health-check-no-recorder");
           return;
+        }
+
+        // If recorder is inactive, check if we're in a normal transition or stuck
+        if (mr.state !== "recording") {
+          const timeSinceLastChunk = now - lastSuccessfulChunkRef.current;
+          // Only trigger recovery if recorder has been inactive for more than 10 seconds
+          // This allows normal chunk transitions which take ~30ms + processing time
+          if (timeSinceLastChunk > 10000) {
+            console.warn("[record] health check: recorder stuck inactive", {
+              state: mr.state,
+              timeSinceLastChunk,
+              isStarting: isStartingRef.current,
+              recoveryInProgress: recoveryInProgressRef.current
+            });
+            forceRecovery("health-check-recorder-stuck");
+            return;
+          } else {
+            console.debug("[record] health check: recorder temporarily inactive (normal)", {
+              state: mr.state,
+              timeSinceLastChunk
+            });
+          }
         }
 
         // Check 2: Stream health
@@ -631,9 +673,12 @@ function RecordContent() {
 
         // Check 3: Chunk timeout (no successful chunks in too long)
         const timeSinceLastChunk = now - lastSuccessfulChunkRef.current;
-        if (timeSinceLastChunk > 15000) { // 15 seconds
+        // Be more lenient for the first chunk (20s) vs subsequent chunks (15s)
+        const timeoutThreshold = (lastSuccessfulChunkRef.current === 0) ? 20000 : 15000;
+        if (timeSinceLastChunk > timeoutThreshold) {
           console.warn("[record] health check: no chunks for too long", {
             timeSinceLastChunk,
+            timeoutThreshold,
             lastSuccessfulChunk: lastSuccessfulChunkRef.current
           });
           forceRecovery("health-check-timeout");
@@ -661,13 +706,13 @@ function RecordContent() {
           inflightChunks: inflightRef.current
         });
 
-      }, 5000); // Check every 5 seconds
+      }, 7000); // Check every 7 seconds (offset from 5s chunk cycle)
     }
 
     // Lightweight heartbeat for basic monitoring
     if (!heartbeatRef.current) {
       heartbeatRef.current = setInterval(() => {
-        if (!recording) return;
+        if (!recordingRef.current) return;
 
         // Just update activity timestamp and basic logging
         const now = Date.now();
@@ -683,8 +728,8 @@ function RecordContent() {
   }
 
   function stopRecording() {
-    if (!recording) return;
-    setRecording(false);
+    if (!recordingRef.current) return;
+    updateRecording(false);
     setStatus("idle");
     commitPendingSnippet();
 
@@ -712,12 +757,8 @@ function RecordContent() {
     isStartingRef.current = false;
     retryCountRef.current = 0;
 
-    // Stateless finalize
-    if (clientSessionIdRef.current) {
-      fetch(`/api/transcribe?action=finalize&mode=stateless&clientSessionId=${encodeURIComponent(clientSessionIdRef.current)}`, { method: "POST" })
-        .then(() => console.log("[record] finalization complete"))
-        .catch((err) => console.warn("[record] finalization failed", err?.message));
-    }
+    // Daily sessions are automatically finalized - no need for explicit finalize
+    console.log("[record] recording session complete");
 
     try { sseRef.current?.close?.(); } catch { }
   }
@@ -729,22 +770,6 @@ function RecordContent() {
           <CardTitle>Record</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Debug section */}
-          <div className="mb-4 p-2 bg-muted rounded text-sm">
-            <div>User: {user?.email || 'Not authenticated'}</div>
-            <div>Org: {currentOrganization?.name || 'No organization'}</div>
-            <div>ensureOrganization: {typeof ensureOrganization}</div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                console.log("DEBUG: Simple button clicked!");
-                alert("Simple button works!");
-              }}
-            >
-              Test Click
-            </Button>
-          </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {status === "recording" ? (
@@ -774,7 +799,7 @@ function RecordContent() {
                 </Button>
               )}
               {(status === "error" || status === "no-org") && (
-                <Button variant="secondary" size="icon" onClick={() => { if (!recording) startRecording(); }} aria-label="Retry">
+                <Button variant="secondary" size="icon" onClick={() => { if (!recordingRef.current) startRecording(); }} aria-label="Retry">
                   <RefreshCcw className="h-4 w-4" />
                 </Button>
               )}

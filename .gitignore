@@ -42,6 +42,7 @@ next-env.d.ts
 
 
 licensed
-credentials/google.json
+credentials/*
 
 .cursor
+WARP.md

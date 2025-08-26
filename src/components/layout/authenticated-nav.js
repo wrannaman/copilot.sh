@@ -17,11 +17,9 @@ export function AuthenticatedNav() {
 
   const navLinks = [
     { href: "/dashboard", label: "Dashboard" },
-    { href: "/questionnaires", label: "Questionnaires" },
-    { href: "/datasets", label: "Datasets" },
-    // { href: "/integrations", label: "Integrations" },
+    { href: "/record", label: "Record" },
+    { href: "/integrations", label: "Integrations" },
     { href: "/team", label: "Team" },
-    // { href: "/billing", label: "Billing" },
   ];
 
   return (
@@ -29,7 +27,10 @@ export function AuthenticatedNav() {
       <div className="container mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/dashboard" className="text-lg font-semibold text-foreground mr-4">
-            Sec Req
+            <span className="inline-flex items-center gap-2">
+              <img src="/favicon.ico" alt="Copilot.sh" className="h-6 w-6" />
+              <span>Copilot.sh</span>
+            </span>
           </Link>
           <nav className="flex items-center gap-4">
             {navLinks.map((link) => (

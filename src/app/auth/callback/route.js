@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 
@@ -24,42 +23,33 @@ export async function GET(request) {
       return NextResponse.redirect(new URL('/auth/login', request.url))
     }
 
-    // 2) Ensure org + membership using admin (service role) client
+    // 2) Ensure org idempotently (SECURITY DEFINER RPC) and set cookie
     const { data: userRes } = await supabase.auth.getUser()
-    const userId = userRes?.user?.id
-    if (userId) {
-      const admin = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_ROLE,
-        { auth: { persistSession: false } }
-      )
-
-      // Existing membership?
-      const { data: membership } = await admin
-        .from('org_members')
-        .select('organization_id, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle()
-
-      if (!membership?.organization_id) {
-        const { data: org } = await admin
-          .from('org')
-          .upsert({ id: userId, name: 'My Organization', display_name: 'My Organization' }, { onConflict: 'id' })
-          .select('id')
-          .single()
-
-        if (org?.id) {
-          await admin
-            .from('org_members')
-            .upsert({ user_id: userId, organization_id: org.id, role: 'owner' }, { onConflict: 'user_id,organization_id' })
-        }
-      }
+    const user = userRes?.user
+    if (!user) {
+      return NextResponse.redirect(new URL('/auth/login', request.url))
     }
 
-    // 3) Redirect to next
-    return NextResponse.redirect(new URL(next, request.url))
+    const preferred_name =
+      (user.user_metadata && user.user_metadata.full_name) ||
+      (user.email && user.email.split('@')[0]) ||
+      'Personal'
+
+    const { data: orgId, error: orgErr } = await supabase.rpc('ensure_current_user_org', {
+      preferred_name,
+    })
+    if (orgErr || !orgId) {
+      return NextResponse.redirect(new URL('/error?code=org_init_failed', request.url))
+    }
+
+    const res = NextResponse.redirect(new URL(next, request.url))
+    res.cookies.set('org_id', String(orgId), {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    })
+    return res
   } catch {
     return NextResponse.redirect(new URL('/auth/login', request.url))
   }

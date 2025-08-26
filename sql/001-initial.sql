@@ -108,40 +108,6 @@ CREATE TABLE IF NOT EXISTS session_transcripts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_transcript ON session_transcripts(session_id);
 
--- (digests removed for simplification)
-
--- (RAG tables removed for simplification)
-
--- RAG over session audio transcripts: chunks + summaries
-CREATE TABLE IF NOT EXISTS session_chunks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  chunk_index INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  embedding VECTOR(768),
-  ts tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
-  meta JSONB NOT NULL DEFAULT '{}'::jsonb, -- {"speaker_tag":1,"start":12.34,"end":15.67}
-  start_time_seconds FLOAT,
-  end_time_seconds FLOAT,
-  speaker_tag INTEGER,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(session_id, chunk_index)
-);
-
-CREATE TABLE IF NOT EXISTS session_summaries (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  summary TEXT,
-  actions JSONB NOT NULL DEFAULT '[]',
-  commitments JSONB NOT NULL DEFAULT '[]',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_session_chunks_session ON session_chunks(session_id);
-CREATE INDEX IF NOT EXISTS idx_session_chunks_ts ON session_chunks USING GIN (ts);
-CREATE INDEX IF NOT EXISTS session_chunks_embedding_ivfflat
-ON session_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-
 -- ----------------------------------------------------------------------------
 -- Grants for server (service_role) to manage orgs and memberships
 -- ----------------------------------------------------------------------------
@@ -149,6 +115,10 @@ GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org_members TO service_role;
 GRANT SELECT ON TABLE org_invites TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_events TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integrations TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- Calendar mirror (lightweight; read-only link to GCal)
@@ -230,6 +200,66 @@ BEGIN
 END;
 $$;
 
+-- Convenience: current user orgs (RLS-safe; no params)
+CREATE OR REPLACE FUNCTION my_organizations()
+RETURNS TABLE(org_id UUID, org_name TEXT, user_role user_role)
+LANGUAGE sql
+SECURITY INVOKER
+AS $$
+  SELECT o.id, o.name, om.role
+  FROM org o
+  JOIN org_members om ON o.id = om.organization_id
+  WHERE om.user_id = auth.uid();
+$$;
+
+-- Idempotent: ensure current user belongs to exactly one org; if none, create and make them owner
+-- Returns the org_id. Intended for use in auth callback with user token.
+CREATE OR REPLACE FUNCTION ensure_current_user_org(preferred_name TEXT DEFAULT NULL)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_org_id UUID;
+BEGIN
+  -- Prevent duplicate org creation during concurrent logins for the same user
+  PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 42));
+
+  -- Try to find any existing membership for this user (first wins)
+  SELECT o.id INTO v_org_id
+  FROM org o
+  JOIN org_members om ON o.id = om.organization_id
+  WHERE om.user_id = auth.uid()
+  ORDER BY om.created_at ASC
+  LIMIT 1;
+
+  IF v_org_id IS NULL THEN
+    -- Create a new org and add current user as owner
+    INSERT INTO org (name, display_name)
+    VALUES (COALESCE(NULLIF(TRIM(preferred_name), ''), 'Personal'), COALESCE(NULLIF(TRIM(preferred_name), ''), 'Personal'))
+    RETURNING id INTO v_org_id;
+
+    INSERT INTO org_members (user_id, organization_id, role)
+    VALUES (auth.uid(), v_org_id, 'owner')
+    ON CONFLICT (user_id, organization_id) DO NOTHING;
+  END IF;
+
+  RETURN v_org_id;
+END;
+$$;
+
+-- Service-only: list users in an org (attachable to session/cookie server-side)
+CREATE OR REPLACE FUNCTION get_org_users(p_org_id UUID)
+RETURNS TABLE(user_id UUID, role user_role)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT om.user_id, om.role
+  FROM org_members om
+  WHERE om.organization_id = p_org_id;
+$$;
+
 -- ----------------------------------------------------------------------------
 -- RLS Enablement
 -- ----------------------------------------------------------------------------
@@ -243,9 +273,7 @@ ALTER TABLE calendar_events        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integrations           ENABLE ROW LEVEL SECURITY;
 -- (jobs/outbound/audit removed)
 
--- Enable RLS for RAG tables
-ALTER TABLE session_chunks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE session_summaries ENABLE ROW LEVEL SECURITY;
+-- RLS for deleted tables removed
 
 -- ----------------------------------------------------------------------------
 -- RLS Policies (org-scoped)
@@ -352,75 +380,27 @@ CREATE POLICY "org members select integrations" ON integrations
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
   );
 CREATE POLICY "owners manage integrations" ON integrations
-  FOR ALL USING (
-    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
+  FOR UPDATE USING (
+    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
+  )
+  WITH CHECK (
+    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
+  );
+CREATE POLICY "owners insert integrations" ON integrations
+  FOR INSERT WITH CHECK (
+    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
+  );
+CREATE POLICY "owners delete integrations" ON integrations
+  FOR DELETE USING (
+    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
   );
 
--- session_chunks: follow session/org
-CREATE POLICY "org members select session chunks" ON session_chunks
-  FOR SELECT USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
-CREATE POLICY "editors manage session chunks" ON session_chunks
-  FOR ALL USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
-
--- session_summaries: follow session/org
-CREATE POLICY "org members select session summaries" ON session_summaries
-  FOR SELECT USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
-CREATE POLICY "editors manage session summaries" ON session_summaries
-  FOR ALL USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
+-- Policies for deleted tables removed
 
 -- ----------------------------------------------------------------------------
--- RPCs: Match functions for RAG
+-- RPCs: Functions for future RAG features (when needed)
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION match_session_chunks(
-  query_embedding VECTOR(768),
-  session_ids UUID[],
-  match_threshold FLOAT DEFAULT 0.7,
-  match_count INT DEFAULT 10
-) RETURNS TABLE(
-  id UUID,
-  session_id UUID,
-  content TEXT,
-  similarity FLOAT,
-  speaker_tag INTEGER,
-  start_time_seconds FLOAT,
-  end_time_seconds FLOAT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RETURN QUERY
-  SELECT
-    sc.id,
-    sc.session_id,
-    sc.content,
-    (sc.embedding <#> query_embedding) * -1 AS similarity,
-    sc.speaker_tag,
-    sc.start_time_seconds,
-    sc.end_time_seconds
-  FROM session_chunks sc
-  WHERE 
-    sc.session_id = ANY(session_ids)
-    AND (sc.embedding <#> query_embedding) * -1 > match_threshold
-  ORDER BY similarity DESC
-  LIMIT match_count;
-END;
-$$;
+-- (match functions removed - will add back when we implement RAG)
 
 -- (jobs policies removed)
 
@@ -510,6 +490,11 @@ CREATE POLICY "editors can manage session audio" ON storage.objects
 -- Harden defaults so future views/tables don't inherit broad privileges
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated, service_role;
+
+-- Explicit function grants
+GRANT EXECUTE ON FUNCTION my_organizations() TO authenticated;
+GRANT EXECUTE ON FUNCTION ensure_current_user_org(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_org_users(UUID) TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- Minimal Search Function (semantic + optional time range filter)

@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { createClient } from '@/utils/supabase/client'
-import { useEffect, useState, createContext, useContext } from 'react'
+import { useEffect, useState, createContext, useContext, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from "@/components/toast-provider"
 
@@ -12,31 +12,17 @@ const AuthContext = createContext(null)
 
 // Create a singleton Supabase client for auth operations
 let supabaseClient = null
+let organizationsFetchPromise = null
 const getSupabaseClient = () => {
   if (!supabaseClient) {
     supabaseClient = createClient()
+    // Ensure client is properly initialized before use
+    if (!supabaseClient.supabaseUrl || !supabaseClient.supabaseKey) {
+      throw new Error('Supabase client initialization failed - missing URL or key')
+    }
   }
   return supabaseClient
 }
-
-setTimeout(async () => {
-  // Simple direct query with hard timeout to avoid hanging
-  const supabase = getSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  const queryPromise = await supabase
-    .from('org_members')
-    .select(`
-   org (
-     id,
-     name,
-     slug,
-     logo_url,
-     created_at
-   )
- `)
-    .eq('user_id', user.id)
-  console.warn("🚀 ~ queryPromise:", queryPromise)
-})
 
 export const useAuthStore = create((set, get) => ({
   user: null,
@@ -94,227 +80,74 @@ export const useAuthStore = create((set, get) => ({
     const { user } = get()
     if (!user) return
     try {
-      // Ensure session token is present before querying
-      console.log('after getSession')
+      if (organizationsFetchPromise) return organizationsFetchPromise
 
-      // Simple direct query with hard timeout to avoid hanging
-      const queryPromise = supabase
-        .from('org_members')
-        .select(`
-          org (
-            id,
-            name,
-            logo_url,
-            created_at
-          )
-        `)
-        .eq('user_id', user.id)
-      console.log("🚀 ~ queryPromise:", queryPromise)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('org_members fetch timeout')), 7000)
-      )
+      organizationsFetchPromise = (async () => {
+        // Fast-path: if callback set org_id cookie, populate immediately
+        try {
+          if (typeof document !== 'undefined' && !get().currentOrganization) {
+            const match = document.cookie.match(/(?:^|; )org_id=([^;]+)/)
+            if (match) {
+              const orgId = decodeURIComponent(match[1])
+              if (orgId) {
+                const minimal = { org_id: orgId, org_name: null, name: null, logo_url: null, created_at: null }
+                set({ organizations: [minimal], currentOrganization: minimal })
+              }
+            }
+          }
+        } catch { }
 
-      const { data, error } = await Promise.race([queryPromise, timeoutPromise])
+        const { data, error } = await supabase.rpc('my_organizations')
 
-      console.log("🚀 fetchOrganizations result ~ error:", error)
-      console.log("🚀 fetchOrganizations result ~ data:", data)
+        if (error) {
+          console.error('❌ Organization fetch failed (RPC):', error)
+          return { data: null, error }
+        }
 
-
-      if (!error && data && data.length > 0) {
-        const orgs = data.map(item => ({
-          org_id: item.org.id,
-          org_name: item.org.name,
-          name: item.org.name,
-          logo_url: item.org.logo_url,
-          created_at: item.org.created_at
-        }));
+        const orgs = (data || []).map(row => ({
+          org_id: row.org_id,
+          org_name: row.org_name,
+          name: row.org_name,
+          logo_url: null,
+          created_at: null,
+        }))
 
         set({ organizations: orgs })
-
-        if (orgs.length > 0 && !get().currentOrganization) {
+        if (orgs.length > 0) {
           set({ currentOrganization: orgs[0] })
         }
-
         return { data: orgs, error: null }
-      }
+      })()
 
-      // No organizations found - create via server API (avoids client RLS quirks)
-      console.log("📝 No orgs; calling server ensure endpoint...");
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
-      try {
-        const resp = await fetch('/api/organizations/ensure', { method: 'POST', signal: controller.signal });
-        clearTimeout(timer);
-        if (!resp.ok) {
-          const t = await resp.json().catch(() => ({}));
-          throw new Error(t?.details || t?.message || `HTTP ${resp.status}`);
-        }
-        const json = await resp.json();
-        const org = json?.organization;
-        if (org?.id) {
-          const orgEntry = {
-            org_id: org.id,
-            org_name: org.name,
-            name: org.name,
-            logo_url: org.logo_url,
-            created_at: org.created_at,
-          };
-          set({ organizations: [orgEntry], currentOrganization: orgEntry });
-          return { data: [orgEntry], error: null };
-        }
-        throw new Error('ensure endpoint returned no organization');
-      } catch (e) {
-        console.error('❌ ensure endpoint failed:', e?.message);
-        return { data: null, error: e };
-      }
+      const result = await organizationsFetchPromise
+      organizationsFetchPromise = null
+      return result
 
     } catch (error) {
-      console.error("❌ Organization fetch failed:", error);
-      // If database error, try to create organization anyway
-      const slug = `org-${user.id.slice(0, 8)}-${Date.now().toString(36).slice(-4)}`;
-      const createResult = await get().createOrganization('My Organization', slug);
-
-      console.log("🆘 Emergency create result:", createResult);
-
-      if (createResult.error) {
-        console.error("❌ Failed to create default organization:", createResult.error);
-        return { data: null, error: createResult.error };
-      }
-
-      // Return the created organization directly
-      return { data: get().organizations, error: null };
+      console.error('❌ Organization fetch failed (unexpected):', error)
+      organizationsFetchPromise = null
+      return { data: null, error }
     }
   },
 
   ensureOrganization: async () => {
-    console.log("🔒 ensureOrganization called");
     const { currentOrganization } = get()
     if (currentOrganization) {
-      console.log("✅ Current organization exists:", currentOrganization);
       return currentOrganization;
     }
 
-    console.log("🔍 No current organization, fetching...");
     const result = await get().fetchOrganizations()
-    console.log("📊 fetchOrganizations result:", result);
 
     if (result.data && result.data.length > 0) {
-      console.log("✅ Organization ensured:", result.data[0]);
       return result.data[0]
     }
-
     console.error("❌ Failed to ensure organization exists");
     throw new Error('Failed to ensure organization exists')
   },
 
-  createOrganization: async (name, slug) => {
-    console.log("🏗️ createOrganization called", { name, slug });
-    const supabase = getSupabaseClient()
-    const { user } = get()
-    if (!user) {
-      console.error("❌ No user found for org creation");
-      return { error: 'No user found' }
-    }
-
-    console.log("👤 Creating org for user:", user.id);
-
-    try {
-      console.log("📞 Calling create_organization_with_owner RPC...");
-
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Organization creation timeout')), 10000)
-      );
-
-      const createPromise = supabase.rpc('create_organization_with_owner', {
-        org_name: name,
-        owner_id: user.id
-      });
-
-      const { data, error } = await Promise.race([createPromise, timeoutPromise]);
-
-      console.log("📊 RPC result:", { data, error });
-
-      if (error) {
-        console.error("❌ RPC error:", error);
-
-        // Fallback: try direct SQL insert if RPC fails
-        console.log("🔧 Trying direct SQL fallback...");
-        try {
-          // Create organization directly
-          const { data: orgData, error: orgError } = await supabase
-            .from('org')
-            .insert({ name, slug, display_name: name })
-            .select('id')
-            .single();
-
-          if (orgError) {
-            console.error("❌ Direct org creation failed:", orgError);
-            return { data: null, error: orgError };
-          }
-
-          console.log("✅ Organization created via direct SQL:", orgData);
-
-          // Create membership
-          const { error: memberError } = await supabase
-            .from('org_members')
-            .insert({
-              user_id: user.id,
-              organization_id: orgData.id,
-              role: 'owner'
-            });
-
-          if (memberError) {
-            console.error("❌ Membership creation failed:", memberError);
-            return { data: null, error: memberError };
-          }
-
-          console.log("✅ Membership created via direct SQL");
-
-          // Set in state
-          const newOrg = {
-            org_id: orgData.id,
-            org_name: name,
-            name: name,
-            slug: slug,
-            created_at: new Date().toISOString()
-          };
-
-          set({
-            organizations: [newOrg],
-            currentOrganization: newOrg
-          });
-
-          return { data: orgData.id, error: null };
-
-        } catch (fallbackError) {
-          console.error("❌ Fallback creation failed:", fallbackError);
-          return { data: null, error: fallbackError };
-        }
-      }
-
-      console.log("✅ Organization created successfully:", data);
-
-      // Don't call fetchOrganizations to avoid recursion
-      // Instead, manually add the org to state
-      const newOrg = {
-        org_id: data,
-        org_name: name,
-        name: name,
-        slug: slug,
-        created_at: new Date().toISOString()
-      };
-
-      set({
-        organizations: [newOrg],
-        currentOrganization: newOrg
-      });
-
-      return { data, error: null }
-    } catch (error) {
-      console.error("❌ Organization creation failed:", error);
-      return { data: null, error }
-    }
+  createOrganization: async (_name) => {
+    // Client-side org creation is disabled; org is ensured in server auth callback
+    return { data: null, error: new Error('Org creation is server-managed') }
   }
 }))
 
@@ -336,13 +169,14 @@ export function AuthProvider({ children }) {
           store.setSession(session)
           store.setUser(session.user)
 
-          // Fetch organizations immediately if we have a session - this will create one if none exist
-          try {
-            await store.ensureOrganization();
-            console.log("✅ Organization ensured during auth initialization");
-          } catch (error) {
-            console.error("❌ [AUTH] Failed to ensure organization during init:", error);
-          }
+          // Defer organization fetch to avoid blocking initialization
+          setTimeout(async () => {
+            try {
+              await store.ensureOrganization();
+            } catch (error) {
+              console.error("❌ [AUTH] Failed to ensure organization during init:", error);
+            }
+          }, 0)
 
           // Best-effort Slack notification when a session exists
           try {
@@ -364,21 +198,21 @@ export function AuthProvider({ children }) {
     initializeAuth()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-
-        // Set user and session immediately
+      (event, session) => {
+        // Set user and session immediately (sync only)
         store.setSession(session)
         store.setUser(session?.user ?? null)
-        store.setLoading(false) // Set loading false immediately
+        store.setLoading(false)
 
         if (session?.user) {
-          // Ensure organization exists - this will create one if needed
-          try {
-            await store.ensureOrganization();
-            console.log("✅ Organization ensured during auth state change");
-          } catch (error) {
-            console.error("❌ Failed to ensure organization during auth:", error);
-          }
+          // Defer async operations to avoid deadlock
+          setTimeout(async () => {
+            try {
+              await store.ensureOrganization();
+            } catch (error) {
+              console.error("❌ Failed to ensure organization during auth:", error);
+            }
+          }, 0)
         } else {
           store.setOrganizations([])
           store.setCurrentOrganization(null)
@@ -456,10 +290,19 @@ export function useAuth() {
   // Use Zustand store directly to ensure proper reactivity
   const storeState = useAuthStore()
 
-  return {
+  // Memoize the return value to prevent infinite re-renders
+  return useMemo(() => ({
     ...context,
-    ...storeState, // This ensures components re-render when store changes
-  }
+    ...storeState,
+  }), [
+    context.initialized,
+    context.loading,
+    storeState.user,
+    storeState.currentOrganization,
+    storeState.organizations,
+    storeState.session,
+    storeState.loading
+  ])
 }
 
 export const useRequireAuth = (redirectTo = '/auth/login') => {
