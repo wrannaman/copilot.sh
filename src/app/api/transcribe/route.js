@@ -1,10 +1,41 @@
 import { NextResponse } from 'next/server'
 import { createAuthClient, createServiceClient } from '@/utils/supabase/server'
 import { SpeechClient } from '@google-cloud/speech'
+import fs from 'node:fs'
 import { syncGoogleCalendarForOrg, shouldSyncForOrg } from '@/server/integrations/google-calendar-sync'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+function getSpeechClient() {
+  const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS || ''
+  // Mode A: JSON string in env
+  if (gac.trim().startsWith('{')) {
+    try {
+      const json = JSON.parse(gac)
+      const projectId = json.project_id || process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT
+      if (!json.client_email || !json.private_key) {
+        throw new Error('Missing client_email or private_key in GOOGLE_APPLICATION_CREDENTIALS JSON')
+      }
+      console.log('[speech] using credentials from JSON in GOOGLE_APPLICATION_CREDENTIALS')
+      return new SpeechClient({ projectId, credentials: { client_email: json.client_email, private_key: json.private_key } })
+    } catch (e) {
+      console.error('[speech] Failed to parse GOOGLE_APPLICATION_CREDENTIALS as JSON:', e?.message)
+      throw e
+    }
+  }
+  // Mode B: path on disk
+  if (gac) {
+    if (!fs.existsSync(gac)) {
+      throw new Error(`GOOGLE_APPLICATION_CREDENTIALS path does not exist: ${gac}`)
+    }
+    console.log('[speech] using credentials from path in GOOGLE_APPLICATION_CREDENTIALS')
+    return new SpeechClient()
+  }
+  // Mode C: ADC (gcloud or metadata)
+  console.log('[speech] using Application Default Credentials (no GOOGLE_APPLICATION_CREDENTIALS provided)')
+  return new SpeechClient()
+}
 
 export async function POST(request) {
   console.log('🚨 [transcribe] API HIT! Request received')
@@ -50,7 +81,7 @@ export async function POST(request) {
     })
 
     try {
-      const speech = new SpeechClient()
+      const speech = getSpeechClient()
       // Choose encoding based on header sniffing first, then mimeType
       const isOgg = sigAscii === 'OggS'
       const isWebm = sig4.equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
