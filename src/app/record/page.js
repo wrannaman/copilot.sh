@@ -706,7 +706,7 @@ function RecordContent() {
           inflightChunks: inflightRef.current
         });
 
-      }, 7000); // Check every 7 seconds (offset from 5s chunk cycle)
+      }, 6000); // Check every 6 seconds (offset from 4s chunk cycle)
     }
 
     // Lightweight heartbeat for basic monitoring

@@ -128,20 +128,37 @@ export async function POST(request) {
             .maybeSingle()
 
           const existingText = existingTranscript?.text || ''
-          const newText = existingText
-            ? `${existingText}\n\n[${timestamp}] ${transcript}`
-            : `[${timestamp}] ${transcript}`
 
-          // Upsert the transcript
-          await service
-            .from('session_transcripts')
-            .upsert({
-              session_id: todaySession.id,
-              text: newText,
-              words_json: []
-            }, { onConflict: 'session_id' })
+          // Simple deduplication: check if this transcript is very similar to recent content
+          let shouldAppend = true
+          if (existingText) {
+            const recentLines = existingText.split('\n').slice(-3) // Check last 3 lines
+            const recentText = recentLines.join(' ').toLowerCase()
+            const currentText = transcript.toLowerCase()
 
-          console.log('[transcribe] Appended transcript to daily session:', todaySession.id)
+            // If there's significant overlap, skip this chunk
+            if (recentText.includes(currentText) || currentText.includes(recentText)) {
+              console.log('🔄 [transcribe] Skipping duplicate/overlapping content:', transcript)
+              shouldAppend = false
+            }
+          }
+
+          if (shouldAppend) {
+            const newText = existingText
+              ? `${existingText}\n\n[${timestamp}] ${transcript}`
+              : `[${timestamp}] ${transcript}`
+
+            // Upsert the transcript
+            await service
+              .from('session_transcripts')
+              .upsert({
+                session_id: todaySession.id,
+                text: newText,
+                words_json: []
+              }, { onConflict: 'session_id' })
+
+            console.log('✅ [transcribe] Appended transcript to daily session:', todaySession.id)
+          }
         } else {
           console.log('[transcribe] No transcript to save for daily session:', todaySession.id)
         }
