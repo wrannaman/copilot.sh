@@ -9,9 +9,7 @@ import { useToast } from '@/components/toast-provider';
 import {
   CalendarIcon,
   CheckIcon,
-  AlertCircleIcon,
   RefreshCwIcon,
-  LinkIcon,
   XIcon
 } from 'lucide-react';
 

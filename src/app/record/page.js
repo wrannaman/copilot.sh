@@ -2,859 +2,344 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
+import { AuthenticatedNav } from "@/components/layout/authenticated-nav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/hooks/use-auth";
-import { Mic, Square, Loader2, WifiOff, RefreshCcw } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
-import { AuthenticatedNav } from "@/components/layout/authenticated-nav";
-import { Slider } from "@/components/ui/slider";
+// removed Progress and Slider (RMS UI removed)
+import { Mic, Square } from "lucide-react";
+import { useToast } from "@/components/toast-provider";
+
+// --- Tunables ---
+const WINDOW_MS = 10000;       // 10s window
+const STEP_MS = 10000;         // emit every 10s → no overlap
+const ENDPOINT = "/api/transcribe"; // POST target
+const MIN_EMIT_GAP_MS = STEP_MS; // rate-limit emits to avoid flooding
 
 export default function RecordPage() {
   return (
     <AuthGuard>
       <div className="min-h-screen bg-background">
         <AuthenticatedNav />
-        <RecordContent />
+        <div className="container mx-auto max-w-3xl py-8">
+          <RecordContent />
+        </div>
       </div>
     </AuthGuard>
   );
 }
 
 function RecordContent() {
-  const { user, currentOrganization, ensureOrganization } = useAuth();
+  const { toast } = useToast();
 
-  // Debug auth state (removed to prevent console spam)
-  const mediaRecorderRef = useRef(null);
-  const streamRef = useRef(null);
-  const sseRef = useRef(null);
+  // UI state
+  const [isRecording, setIsRecording] = useState(false);
+  const [status, setStatus] = useState("idle");
+  // RMS UI removed
+  const [recentTranscripts, setRecentTranscripts] = useState([]); // last 10 transcripts
 
-  // User intent to be recording; we auto-restart recorder/SSE while this is true
-  const [recording, setRecording] = useState(false);
-  const recordingRef = useRef(false); // Reliable ref for immediate checks
-  const [status, setStatus] = useState("idle"); // idle | recording | reconnecting | error | no-org
-  const [isSending, setIsSending] = useState(false);
+  // Media + analysis - initialize with proper values to avoid type issues
+  const streamRef = useRef(/** @type {MediaStream | null} */(null));
+  const recRef = useRef(/** @type {MediaRecorder | null} */(null));
 
-  const [snippets, setSnippets] = useState([]); // last 20 snippets only
-  const [pendingText, setPendingText] = useState(""); // coalesced live text not yet committed
+  // Timing
+  const recStartEpochRef = useRef(/** @type {number} */(0));   // performance.now() at start
+  const seqRef = useRef(/** @type {number} */(0));
 
-  const sessionIdRef = useRef("");
-  const lastActivityRef = useRef(Date.now());
-  const heartbeatRef = useRef(null);
-  const sseConnectedRef = useRef(false);
-  const pendingSnippetRef = useRef("");
-  const pendingTimerRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const analyserRef = useRef(null);
-  const vadDataRef = useRef(null);
-  const vadIntervalRef = useRef(null);
-  const vadThresholdRef = useRef(0.02);
-  const maxRmsSinceLastChunkRef = useRef(0);
-  const inflightRef = useRef(0);
-  const chunkTimerRef = useRef(null);
-  const chunkLengthMsRef = useRef(5000);
-  const isStartingRef = useRef(false);
-  const retryCountRef = useRef(0);
-  const maxRetriesRef = useRef(5);
-  const retryDelayRef = useRef(1000);
-  const lastSuccessfulChunkRef = useRef(Date.now());
-  const healthCheckRef = useRef(null);
-  const recoveryInProgressRef = useRef(false);
+  // Timers
+  const schedulerTimerRef = useRef(/** @type {number | null} */(null)); // unused with continuous recorder; kept for safety
 
-  // Helper to update both recording state and ref synchronously
-  function updateRecording(value) {
-    recordingRef.current = value;
-    setRecording(value);
-    console.debug("[record] updateRecording", { value });
+  // ---- helpers ----
+  function chooseMime() {
+    const cands = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+    ];
+    return cands.find((t) => MediaRecorder.isTypeSupported(t));
   }
 
-  async function forceRecovery(reason = "unknown") {
-    if (recoveryInProgressRef.current) return;
-    recoveryInProgressRef.current = true;
-    console.warn("[record] FORCE RECOVERY", { reason, retryCount: retryCountRef.current });
+  // RMS sampling removed
+
+  // ---- core ----
+  async function start() {
+    if (isRecording) return;
 
     try {
-      // Clean up everything
-      try { mediaRecorderRef.current?.stop(); } catch { }
-      try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { }
-      try { if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; } } catch { }
-      try { audioCtxRef.current?.close(); } catch { }
-      try { if (chunkTimerRef.current) { clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; } } catch { }
-
-      // Wait before retry
-      const delay = Math.min(retryDelayRef.current * Math.pow(2, retryCountRef.current), 10000);
-      await new Promise(resolve => setTimeout(resolve, delay));
-
-      if (!recordingRef.current) {
-        recoveryInProgressRef.current = false;
-        return;
-      }
-
-      // Restart everything
-      setStatus("reconnecting");
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          noiseSuppression: true,
-          echoCancellation: true,
-          autoGainControl: true,
-        },
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-
       streamRef.current = stream;
-      vadThresholdRef.current = rmsThreshold;
 
-      // Restart VAD
-      try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        audioCtxRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.8;
-        source.connect(analyser);
-        analyserRef.current = analyser;
-        vadDataRef.current = new Uint8Array(analyser.fftSize);
-        if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
-        vadIntervalRef.current = setInterval(() => {
-          try {
-            analyser.getByteTimeDomainData(vadDataRef.current);
-            let sumSquares = 0;
-            for (let i = 0; i < vadDataRef.current.length; i++) {
-              const centered = (vadDataRef.current[i] - 128) / 128;
-              sumSquares += centered * centered;
-            }
-            const rms = Math.sqrt(sumSquares / vadDataRef.current.length);
-            setCurrentRms(rms);
-            if (rms > (maxRmsSinceLastChunkRef.current || 0)) {
-              maxRmsSinceLastChunkRef.current = rms;
-            }
-          } catch (e) {
-            console.warn("[record] VAD error", e?.message);
-          }
-        }, 150);
-      } catch (e) {
-        console.warn("[record] VAD setup failed", e?.message);
-      }
+      // AudioContext/Analyser removed (no RMS)
 
-      // Start recording again
-      setupMediaRecorder(stream);
-      console.debug("[record] recovery: start recorder");
-      try { mediaRecorderRef.current?.start(); } catch (e) { throw new Error(`Failed to start recorder: ${e?.message}`); }
+      // reset clocks and per-window recorders
+      windowRecordersRef.current.forEach(w => { try { w.rec.stop(); } catch { } if (w.stopId) clearTimeout(w.stopId); });
+      windowRecordersRef.current = [];
+      seqRef.current = 0;
+      recStartEpochRef.current = performance.now();
 
-      if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current);
-      chunkTimerRef.current = setTimeout(() => {
-        console.debug("[record] recovery timer: stopping recorder");
-        try { if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop(); } catch { }
-        chunkTimerRef.current = null;
-      }, chunkLengthMsRef.current);
+      const mime = chooseMime();
 
-      setStatus("recording");
-      lastActivityRef.current = Date.now();
-      lastSuccessfulChunkRef.current = Date.now();
-      retryCountRef.current = 0; // Reset on success
-      console.log("[record] recovery successful");
+      function startWindowRecorder() {
+        const startHi = performance.now() - recStartEpochRef.current;
+        const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
 
-    } catch (e) {
-      console.error("[record] recovery failed", e?.message);
-      retryCountRef.current += 1;
-      if (retryCountRef.current < maxRetriesRef.current) {
-        console.warn("[record] will retry recovery", { retryCount: retryCountRef.current });
-        setTimeout(() => forceRecovery(`retry-${retryCountRef.current}`), 2000);
-      } else {
-        console.error("[record] max retries reached, stopping");
-        setStatus("error");
-        updateRecording(false);
-      }
-    } finally {
-      recoveryInProgressRef.current = false;
-    }
-  }
+        rec.ondataavailable = async (ev) => {
+          if (!ev.data || ev.data.size === 0) return;
+          // Single self-contained window blob (MediaRecorder provides proper headers)
+          const seq = seqRef.current++;
+          console.log(`Sending window ${seq}, size: ${ev.data.size}`);
 
-  function scheduleNextChunk() {
-    if (!recordingRef.current) {
-      console.debug("[record] scheduleNextChunk: not recording, skipping", { recording, recordingRef: recordingRef.current });
-      return;
-    }
-    if (isStartingRef.current) {
-      console.debug("[record] scheduleNextChunk: already starting, skipping");
-      return;
-    }
-    if (recoveryInProgressRef.current) {
-      console.debug("[record] scheduleNextChunk: recovery in progress, skipping");
-      return;
-    }
-
-    console.debug("[record] scheduleNextChunk: starting new chunk");
-    isStartingRef.current = true;
-    try {
-      const live = streamRef.current && streamRef.current.getTracks().some((t) => t.readyState === 'live');
-      if (!live) {
-        console.warn("[record] stream not live, triggering recovery");
-        isStartingRef.current = false;
-        forceRecovery("stream-not-live");
-        return;
-      }
-
-      setTimeout(() => {
-        try {
-          if (!recordingRef.current) {
-            console.debug("[record] scheduleNextChunk timeout: not recording anymore");
-            isStartingRef.current = false;
-            return;
-          }
-
-          setupMediaRecorder(streamRef.current);
-          console.debug("[record] next chunk: start recorder");
+          const form = new FormData();
+          form.append("chunk", ev.data, `chunk-${String(seq).padStart(6, "0")}.webm`);
+          form.append("seq", String(seq));
+          form.append("windowStartMs", String(Math.round(startHi)));
+          form.append("windowEndMs", String(Math.round(performance.now() - recStartEpochRef.current)));
+          form.append("stepMs", String(STEP_MS));
+          form.append("windowMs", String(WINDOW_MS));
 
           try {
-            if (mediaRecorderRef.current?.state === 'inactive') {
-              mediaRecorderRef.current.start();
-            } else {
-              throw new Error(`Recorder in invalid state: ${mediaRecorderRef.current?.state}`);
-            }
+            console.log(`Posting to ${ENDPOINT}...`);
+            const res = await fetch(ENDPOINT, { method: "POST", body: form });
+            console.log(`Response status: ${res.status} ${res.statusText}`);
+            const responseData = await res.text();
+            console.log(`Upload success for window ${seq}:`, responseData);
+            try {
+              const data = JSON.parse(responseData);
+              if (data.text && data.text.trim()) {
+                const transcript = {
+                  seq,
+                  text: data.text.trim(),
+                  timestamp: new Date().toLocaleTimeString(),
+                };
+                setRecentTranscripts(prev => [...prev.slice(-9), transcript]);
+                toast.success(`Chunk #${seq}: "${data.text}"`);
+              } else {
+                toast.info(`Chunk #${seq}: (silence)`);
+              }
+            } catch { }
           } catch (e) {
-            console.error("[record] failed to start recorder", e?.message);
-            isStartingRef.current = false;
-            forceRecovery("recorder-start-failed");
-            return;
-          }
-
-          if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current);
-          chunkTimerRef.current = setTimeout(() => {
-            console.debug("[record] chunk timer: stopping recorder");
-            try {
-              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                mediaRecorderRef.current.stop();
-              }
-            } catch (e) {
-              console.warn("[record] error stopping recorder", e?.message);
-            }
-            chunkTimerRef.current = null;
-          }, chunkLengthMsRef.current);
-
-          // Schedule next chunk with overlap (start before current chunk ends)
-          // Removed overlapTimerRef and overlapMsRef, so this block is removed.
-
-        } catch (e) {
-          console.error("[record] scheduleNextChunk error", e?.message);
-          forceRecovery("schedule-error");
-        } finally {
-          isStartingRef.current = false;
-        }
-      }, 30);
-    } catch (e) {
-      console.error("[record] scheduleNextChunk outer error", e?.message);
-      isStartingRef.current = false;
-      forceRecovery("schedule-outer-error");
-    }
-  }
-
-  const [rmsThreshold, setRmsThreshold] = useState(0.015);
-  const [currentRms, setCurrentRms] = useState(0);
-
-  // Note: AuthGuard already prevents unauthenticated access
-
-  useEffect(() => {
-    return () => {
-      console.log("[record] component cleanup");
-      try {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-          mediaRecorderRef.current.stop();
-        }
-      } catch { }
-      try {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-        }
-      } catch { }
-      try { sseRef.current?.close?.(); } catch { }
-
-      // Clean up all timers and intervals
-      if (heartbeatRef.current) {
-        clearInterval(heartbeatRef.current);
-        heartbeatRef.current = null;
-      }
-      if (healthCheckRef.current) {
-        clearInterval(healthCheckRef.current);
-        healthCheckRef.current = null;
-      }
-      try { if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; } } catch { }
-      try { if (chunkTimerRef.current) { clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; } } catch { }
-      // Removed overlapTimerRef.current = null;
-      try { if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; } } catch { }
-
-      try { audioCtxRef.current?.close?.(); } catch { }
-    };
-  }, []);
-
-  function commitPendingSnippet() {
-    const text = (pendingSnippetRef.current || "").trim();
-    if (text) {
-      setSnippets((prev) => [...prev, text].slice(-20));
-      console.debug("[record] commit snippet", { text });
-    }
-    pendingSnippetRef.current = "";
-    setPendingText("");
-  }
-
-  function coalesceSnippet(nextText) {
-    if (!nextText) return;
-    const incoming = String(nextText).trim();
-    if (!incoming) return;
-
-    // merge with pending for smoother word boundaries
-    const current = pendingSnippetRef.current || "";
-    let merged = current;
-    if (!current) {
-      merged = incoming;
-    } else {
-      const lastChar = current.slice(-1);
-      const firstChar = incoming.charAt(0);
-      if (lastChar === "-") {
-        // hyphenated split, drop hyphen and join without space
-        merged = current.slice(0, -1) + incoming;
-      } else {
-        const lastWord = current.split(/\s+/).pop();
-        const firstWord = incoming.split(/\s+/)[0];
-        if (lastWord && firstWord && lastWord.toLowerCase() === firstWord.toLowerCase()) {
-          merged = current + " " + incoming.split(/\s+/).slice(1).join(" ");
-        } else {
-          merged = current + (lastChar ? " " : "") + incoming;
-        }
-      }
-    }
-    pendingSnippetRef.current = merged;
-    setPendingText(merged);
-
-    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
-    pendingTimerRef.current = setTimeout(() => {
-      commitPendingSnippet();
-    }, 700);
-  }
-
-  function handleIncomingText(text) {
-    lastActivityRef.current = Date.now();
-    coalesceSnippet(text);
-  }
-
-  async function ensureSession() {
-    if (sessionIdRef.current) return sessionIdRef.current;
-    try {
-      const res = await fetch(`/api/transcribe?action=start`, { method: "POST" });
-      if (res.ok) {
-        const json = await res.json();
-        sessionIdRef.current = json.sessionId || "";
-        openSSE(sessionIdRef.current);
-      }
-    } catch { }
-    return sessionIdRef.current;
-  }
-
-  function openSSE(id) {
-    if (!id) return;
-    try { sseRef.current?.close?.(); } catch { }
-    const es = new EventSource(`/api/transcribe?sessionId=${encodeURIComponent(id)}`);
-    sseRef.current = es;
-    es.onopen = () => {
-      sseConnectedRef.current = true;
-      if (recordingRef.current) setStatus("recording");
-      console.debug("[record] SSE opened", { sessionId: id });
-    };
-    es.onmessage = (evt) => {
-      lastActivityRef.current = Date.now();
-      try {
-        const data = JSON.parse(evt.data || '{}');
-        console.debug("[record] SSE message", { type: data?.type, chars: data?.text?.length || 0 });
-        if (data?.type === 'update' && data.text) {
-          handleIncomingText(data.text);
-        }
-        if (data?.type === 'end') {
-          try { es.close(); } catch { }
-          console.debug("[record] SSE end received");
-        }
-      } catch { }
-    };
-    es.onerror = () => {
-      sseConnectedRef.current = false;
-      console.warn("[record] SSE error; will retry if recording");
-      if (recordingRef.current) {
-        setStatus("reconnecting");
-        // quick retry to keep live
-        setTimeout(() => {
-          if (sessionIdRef.current && recordingRef.current) openSSE(sessionIdRef.current);
-        }, 1000);
-      } else {
-        try { es.close(); } catch { }
-      }
-    };
-  }
-
-  function setupMediaRecorder(stream) {
-    let mr;
-    try {
-      mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-    } catch {
-      mr = new MediaRecorder(stream);
-    }
-    mediaRecorderRef.current = mr;
-
-    mr.addEventListener("dataavailable", async (e) => {
-      if (!e.data || e.data.size === 0) {
-        console.warn("[record] empty data in dataavailable");
-        // Still schedule next chunk even if data is empty
-        scheduleNextChunk();
-        return;
-      }
-
-      lastActivityRef.current = Date.now();
-      lastSuccessfulChunkRef.current = Date.now();
-
-      try {
-        const peakRms = maxRmsSinceLastChunkRef.current || 0;
-        maxRmsSinceLastChunkRef.current = 0;
-
-        // With overlapping chunks, next chunk is already scheduled - no need to schedule here
-
-        if (peakRms < (vadThresholdRef.current || 0)) {
-          console.debug("[record] skip silent chunk", { peakRms, threshold: vadThresholdRef.current });
-          return;
-        }
-
-        inflightRef.current += 1;
-        setIsSending(true);
-
-        const chunkData = {
-          blob: e.data,
-          size: e.data.size,
-          timestamp: Date.now(),
-          peakRms
-        };
-
-        // Retry logic for chunk upload
-        const uploadChunk = async (retries = 3) => {
-          for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-              const form = new FormData();
-              form.append("chunk", chunkData.blob, `chunk-${chunkData.timestamp}.webm`);
-              const qs = ``;
-
-              console.debug("[record] uploading chunk", {
-                size: chunkData.size,
-                peakRms: chunkData.peakRms,
-                attempt: attempt + 1
-              });
-
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-              const res = await fetch(`/api/transcribe${qs}`, {
-                method: "POST",
-                body: form,
-                signal: controller.signal
-              });
-
-              clearTimeout(timeoutId);
-
-              console.debug("[record] chunk response", { ok: res.ok, status: res.status, attempt: attempt + 1 });
-
-              if (!res.ok) {
-                if (res.status >= 500 && attempt < retries - 1) {
-                  // Server error, retry
-                  const delay = 1000 * Math.pow(2, attempt);
-                  console.warn("[record] server error, retrying", { status: res.status, delay });
-                  await new Promise(resolve => setTimeout(resolve, delay));
-                  continue;
-                }
-                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-              }
-
-              const json = await res.json();
-              console.debug("[record] chunk json", { hasText: Boolean(json?.text), keys: Object.keys(json || {}) });
-
-              if (json?.text) {
-                handleIncomingText(json.text);
-              }
-
-              return json; // Success
-
-            } catch (err) {
-              console.error("[record] chunk upload error", {
-                attempt: attempt + 1,
-                error: err?.message,
-                name: err?.name
-              });
-
-              if (attempt === retries - 1) {
-                // Final attempt failed
-                throw err;
-              }
-
-              if (err?.name === 'AbortError') {
-                console.warn("[record] chunk upload timeout, retrying");
-              }
-
-              // Wait before retry
-              const delay = 1000 * Math.pow(2, attempt);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            }
+            console.error('upload failed:', e?.message || e);
+            toast.error(`Upload failed for chunk #${seq}`, { description: e?.message || String(e) });
           }
         };
 
-        // Upload with retries
-        uploadChunk()
-          .then(() => {
-            // Success - reset any retry counters
-            retryCountRef.current = 0;
-          })
-          .catch((err) => {
-            console.error("[record] chunk upload failed after all retries", err?.message);
-            // Don't trigger full recovery for upload failures, just log
-            // The recording continues and we'll try the next chunk
-          })
-          .finally(() => {
-            inflightRef.current = Math.max(0, inflightRef.current - 1);
-            if (inflightRef.current === 0) setIsSending(false);
-          });
-
-      } catch (err) {
-        console.error("[record] dataavailable error", err?.message);
-        inflightRef.current = Math.max(0, inflightRef.current - 1);
-        if (inflightRef.current === 0) setIsSending(false);
-
-        // If this is a critical error, trigger recovery
-        if (err?.message?.includes('recorder') || err?.message?.includes('stream')) {
-          forceRecovery("dataavailable-error");
-        }
+        rec.start(WINDOW_MS);
+        const stopId = window.setTimeout(() => {
+          try { rec.stop(); } catch { }
+        }, WINDOW_MS);
+        windowRecordersRef.current.push({ rec, stopId, startHi });
       }
-    });
 
-    mr.addEventListener("stop", () => {
-      console.debug("[record] recorder stopped");
-      // Note: scheduleNextChunk() is called in dataavailable event, not here
-    });
+      // schedule rolling window recorders every STEP_MS
+      if (schedulerTimerRef.current) clearInterval(schedulerTimerRef.current);
+      startWindowRecorder();
+      schedulerTimerRef.current = window.setInterval(() => {
+        startWindowRecorder();
+      }, STEP_MS);
 
-    return mr;
-  }
+      // RMS meter removed
 
-  async function startRecording() {
-    if (recordingRef.current) return;
-
-    // Ensure user has an organization before starting
-    try {
-      await ensureOrganization();
-    } catch (e) {
-      console.error("[record] ❌ Failed to ensure organization:", e?.message);
-      setStatus("no-org");
-      return;
-    }
-
-    updateRecording(true);
-    setStatus("reconnecting");
-
-    // Initialize timing for health checks
-    lastSuccessfulChunkRef.current = Date.now();
-
-    // Using daily sessions - no need for client session ID
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          noiseSuppression: true,
-          echoCancellation: true,
-          autoGainControl: true,
-        },
-      });
-      try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { }
-      streamRef.current = stream;
-      vadThresholdRef.current = rmsThreshold;
-      // Lightweight VAD using WebAudio RMS
-      try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        audioCtxRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.8;
-        source.connect(analyser);
-        analyserRef.current = analyser;
-        vadDataRef.current = new Uint8Array(analyser.fftSize);
-        if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
-        vadIntervalRef.current = setInterval(() => {
-          try {
-            analyser.getByteTimeDomainData(vadDataRef.current);
-            let sumSquares = 0;
-            for (let i = 0; i < vadDataRef.current.length; i++) {
-              const centered = (vadDataRef.current[i] - 128) / 128;
-              sumSquares += centered * centered;
-            }
-            const rms = Math.sqrt(sumSquares / vadDataRef.current.length);
-            setCurrentRms(rms);
-            if (rms > (maxRmsSinceLastChunkRef.current || 0)) {
-              maxRmsSinceLastChunkRef.current = rms;
-            }
-          } catch { }
-        }, 150);
-      } catch { }
-      setupMediaRecorder(stream);
-      console.debug("[record] first chunk: start recorder");
-      try { mediaRecorderRef.current?.start(); } catch { }
-      if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current);
-      chunkTimerRef.current = setTimeout(() => {
-        console.debug("[record] first chunk timer: stopping recorder");
-        try { if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop(); } catch { }
-        chunkTimerRef.current = null;
-      }, chunkLengthMsRef.current);
-
-      // Pre-schedule overlapping start for second chunk
-      // Removed overlapTimerRef.current = setTimeout(() => { ... }, chunkLengthMsRef.current - overlapMsRef.current);
+      setIsRecording(true);
       setStatus("recording");
-      lastActivityRef.current = Date.now();
-      console.debug("[record] recording started");
-    } catch {
+      toast.success("Recording started");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("start() failed:", message);
+      toast.error(`Recording failed: ${message}`);
       setStatus("error");
-      updateRecording(false);
+      stop();
+    }
+  }
+
+  function stop() {
+    if (!isRecording) return;
+
+    setIsRecording(false);
+    setStatus("idle");
+    // Flush the final window synchronously before tearing down
+    try { void emitWindow(true); } catch { }
+    toast.info("Recording stopped");
+
+    // Stop all window recorders
+    try {
+      windowRecordersRef.current.forEach(w => { try { w.rec.stop(); } catch { } if (w.stopId) clearTimeout(w.stopId); });
+    } catch { }
+    windowRecordersRef.current = [];
+
+    try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { }
+    streamRef.current = null;
+
+    if (schedulerTimerRef.current) { clearInterval(schedulerTimerRef.current); schedulerTimerRef.current = null; }
+
+    fragsRef.current = [];
+  }
+
+  useEffect(() => () => stop(), []);
+
+  // Flush current window when the page is hidden or user navigates away
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.hidden && isRecording) {
+        // let any active recorder emit by stopping them now
+        try { windowRecordersRef.current.forEach(w => { try { w.rec.stop(); } catch { } }); } catch { }
+      }
+    }
+    function onPageHide() {
+      if (isRecording) {
+        try { windowRecordersRef.current.forEach(w => { try { w.rec.stop(); } catch { } }); } catch { }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+    };
+  }, [isRecording]);
+
+  async function emitWindow(force = false) {
+    const nowLogical = logicalClockRef.current;
+    const winStart = Math.max(0, nowLogical - WINDOW_MS);
+    const winEnd = nowLogical;
+
+    // rate limit to avoid emitting more often than STEP_MS unless forced
+    if (!force && (nowLogical - lastEmitLogicalRef.current) < MIN_EMIT_GAP_MS) {
       return;
     }
 
-    // Enhanced health monitoring and recovery
-    if (!healthCheckRef.current) {
-      healthCheckRef.current = setInterval(() => {
-        if (!recordingRef.current) return;
+    const fr = fragsRef.current;
+    if (!fr.length) return;
 
-        const now = Date.now();
-        const mr = mediaRecorderRef.current;
-        const stream = streamRef.current;
+    const within = fr.filter((f) => f.t1 > winStart && f.t0 < winEnd);
+    if (!within.length) return;
 
-        // Check 1: Recorder state - only worry if it's been inactive for too long
-        // Allow brief inactive periods during normal chunk transitions
-        if (!mr) {
-          console.warn("[record] health check: no recorder");
-          forceRecovery("health-check-no-recorder");
-          return;
+    console.log(`Window info: using ${within.length} fragments - SENDING`);
+
+    const type = recRef.current?.mimeType || within[0].blob.type || "audio/webm";
+    const blobs = headerBlobRef.current ? [headerBlobRef.current, ...within.map((f) => f.blob)] : within.map((f) => f.blob);
+    const blobSizes = blobs.map(b => b.size);
+    console.log(`Creating window blob from ${blobs.length} fragments:`, blobSizes);
+    const windowBlob = new Blob(blobs, { type });
+
+    // high-res end ≈ last fragment hiEnd; start = end - WINDOW_MS
+    const hiEnd = within[within.length - 1].hiEnd;
+    const hiStart = Math.max(0, hiEnd - WINDOW_MS);
+
+    const seq = seqRef.current++;
+    console.log(`Sending chunk ${seq}, size: ${windowBlob.size}`);
+    toast.info(`Sending chunk #${seq}`, { description: `Size: ${Math.round(windowBlob.size / 1024)} KB` });
+
+    const form = new FormData();
+    form.append("chunk", windowBlob, `chunk-${String(seq).padStart(6, "0")}.webm`);
+    form.append("seq", String(seq));
+    form.append("windowStartMs", String(Math.round(hiStart)));
+    form.append("windowEndMs", String(Math.round(hiEnd)));
+    // no RMS in payload
+    form.append("stepMs", String(STEP_MS));
+    form.append("windowMs", String(WINDOW_MS));
+
+    try {
+      // mark last emit on attempt to send
+      lastEmitLogicalRef.current = nowLogical;
+      console.log(`Posting to ${ENDPOINT}...`);
+      const res = await fetch(ENDPOINT, { method: "POST", body: form });
+      console.log(`Response status: ${res.status} ${res.statusText}`);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`HTTP ${res.status}: ${errorText}`);
+        throw new Error(`HTTP ${res.status}: ${errorText}`);
+      }
+
+      const responseData = await res.text();
+      console.log(`Upload success for chunk ${seq}:`, responseData);
+
+      // Parse and store transcript
+      try {
+        const data = JSON.parse(responseData);
+        if (data.text && data.text.trim()) {
+          const transcript = {
+            seq,
+            text: data.text.trim(),
+            timestamp: new Date().toLocaleTimeString(),
+            // no RMS kept
+          };
+          setRecentTranscripts(prev => [...prev.slice(-9), transcript]); // keep last 10
+          toast.success(`Chunk #${seq}: "${data.text}"`);
+        } else {
+          toast.info(`Chunk #${seq}: (silence)`);
         }
-
-        // If recorder is inactive, check if we're in a normal transition or stuck
-        if (mr.state !== "recording") {
-          const timeSinceLastChunk = now - lastSuccessfulChunkRef.current;
-          // Only trigger recovery if recorder has been inactive for more than 10 seconds
-          // This allows normal chunk transitions which take ~30ms + processing time
-          if (timeSinceLastChunk > 10000) {
-            console.warn("[record] health check: recorder stuck inactive", {
-              state: mr.state,
-              timeSinceLastChunk,
-              isStarting: isStartingRef.current,
-              recoveryInProgress: recoveryInProgressRef.current
-            });
-            forceRecovery("health-check-recorder-stuck");
-            return;
-          } else {
-            console.debug("[record] health check: recorder temporarily inactive (normal)", {
-              state: mr.state,
-              timeSinceLastChunk
-            });
-          }
-        }
-
-        // Check 2: Stream health
-        if (!stream || !stream.getTracks().some(t => t.readyState === 'live')) {
-          console.warn("[record] health check: stream not live", {
-            hasStream: !!stream,
-            trackStates: stream?.getTracks().map(t => t.readyState) || []
-          });
-          forceRecovery("health-check-stream");
-          return;
-        }
-
-        // Check 3: Chunk timeout (no successful chunks in too long)
-        const timeSinceLastChunk = now - lastSuccessfulChunkRef.current;
-        // Be more lenient for the first chunk (20s) vs subsequent chunks (15s)
-        const timeoutThreshold = (lastSuccessfulChunkRef.current === 0) ? 20000 : 15000;
-        if (timeSinceLastChunk > timeoutThreshold) {
-          console.warn("[record] health check: no chunks for too long", {
-            timeSinceLastChunk,
-            timeoutThreshold,
-            lastSuccessfulChunk: lastSuccessfulChunkRef.current
-          });
-          forceRecovery("health-check-timeout");
-          return;
-        }
-
-        // Check 4: Timer validation
-        if (!chunkTimerRef.current && !isStartingRef.current && !recoveryInProgressRef.current) {
-          console.warn("[record] health check: no chunk timer active");
-          scheduleNextChunk();
-        }
-
-        // Check 5: VAD analysis
-        if (!vadIntervalRef.current) {
-          console.warn("[record] health check: VAD not running");
-          // Don't force recovery for VAD, just log
-        }
-
-        console.debug("[record] health check passed", {
-          recorderState: mr?.state,
-          streamTracks: stream?.getTracks().length,
-          timeSinceLastChunk,
-          hasChunkTimer: !!chunkTimerRef.current,
-          hasOverlapTimer: false, // overlapTimerRef is removed
-          hasVAD: !!vadIntervalRef.current,
-          inflightChunks: inflightRef.current
-        });
-
-      }, 6000); // Check every 6 seconds (offset from 4s chunk cycle)
-    }
-
-    // Lightweight heartbeat for basic monitoring
-    if (!heartbeatRef.current) {
-      heartbeatRef.current = setInterval(() => {
-        if (!recordingRef.current) return;
-
-        // Just update activity timestamp and basic logging
-        const now = Date.now();
-        console.debug("[record] heartbeat", {
-          recording,
-          status,
-          inflightChunks: inflightRef.current,
-          timeSinceActivity: now - lastActivityRef.current
-        });
-
-      }, 10000); // Every 10 seconds
+      } catch (parseError) {
+        console.error('Failed to parse response:', parseError);
+        toast.success(`Chunk #${seq} uploaded successfully`);
+      }
+    } catch (e) {
+      // non-fatal
+      const message = e?.message || e;
+      console.error("upload failed:", message);
+      toast.error(`Upload failed for chunk #${seq}`, { description: message });
     }
   }
 
-  function stopRecording() {
-    if (!recordingRef.current) return;
-    updateRecording(false);
-    setStatus("idle");
-    commitPendingSnippet();
-
-    console.log("[record] stopping recording and cleaning up");
-
-    // Stop all recording components
-    try { mediaRecorderRef.current?.stop(); } catch { }
-    try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { }
-    try { if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; } } catch { }
-    try { audioCtxRef.current?.close?.(); } catch { }
-    try { if (chunkTimerRef.current) { clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; } } catch { }
-    // Removed overlapTimerRef.current = null;
-
-    // Stop monitoring systems
-    if (healthCheckRef.current) {
-      clearInterval(healthCheckRef.current);
-      healthCheckRef.current = null;
-    }
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current);
-      heartbeatRef.current = null;
-    }
-
-    // Reset state
-    recoveryInProgressRef.current = false;
-    isStartingRef.current = false;
-    retryCountRef.current = 0;
-
-    // Daily sessions are automatically finalized - no need for explicit finalize
-    console.log("[record] recording session complete");
-
-    try { sseRef.current?.close?.(); } catch { }
-  }
-
+  // ---- UI ----
   return (
-    <div className="container mx-auto max-w-3xl py-8">
-      <Card>
-        <CardHeader>
-          <CardTitle>Record</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {status === "recording" ? (
-                <span className="flex items-center gap-2 text-green-600"><span className="inline-block h-2 w-2 rounded-full bg-green-500" />Recording</span>
-              ) : status === "reconnecting" ? (
-                <span className="flex items-center gap-2 text-amber-600"><Loader2 className="h-4 w-4 animate-spin" />Reconnecting…</span>
-              ) : status === "error" ? (
-                <span className="flex items-center gap-2 text-red-600"><WifiOff className="h-4 w-4" />Error</span>
-              ) : status === "no-org" ? (
-                <span className="flex items-center gap-2 text-red-600"><WifiOff className="h-4 w-4" />No Organization</span>
-              ) : (
-                <span className="text-muted-foreground">Idle</span>
-              )}
-              {recoveryInProgressRef.current && (
-                <span className="flex items-center gap-1 text-amber-600"><RefreshCcw className="h-3 w-3 animate-spin" />Recovery</span>
-              )}
-              {isSending && <span className="flex items-center gap-1 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Sending</span>}
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3">
-              {!recording ? (
-                <Button onClick={startRecording} size="icon" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
-                  <Mic className="h-7 w-7 sm:h-8 sm:w-8" />
-                </Button>
-              ) : (
-                <Button onClick={stopRecording} size="icon" variant="destructive" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
-                  <Square className="h-7 w-7 sm:h-8 sm:w-8" />
-                </Button>
-              )}
-              {(status === "error" || status === "no-org") && (
-                <Button variant="secondary" size="icon" onClick={() => { if (!recordingRef.current) startRecording(); }} aria-label="Retry">
-                  <RefreshCcw className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Recorder</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            {status === "recording" ? (
+              <span className="inline-flex items-center gap-2 text-green-600">
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+                Recording
+              </span>
+            ) : status === "error" ? (
+              <span className="inline-flex items-center gap-2 text-red-600">Error occurred</span>
+            ) : (
+              <span className="text-muted-foreground">Idle</span>
+            )}
           </div>
+          <div className="flex items-center gap-2">
+            {!isRecording ? (
+              <Button onClick={start} size="icon" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
+                <Mic className="h-7 w-7 sm:h-8 sm:w-8" />
+              </Button>
+            ) : (
+              <Button onClick={stop} size="icon" variant="destructive" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
+                <Square className="h-7 w-7 sm:h-8 sm:w-8" />
+              </Button>
+            )}
+          </div>
+        </div>
 
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">
+            Sends 10s windows. All audio is captured for meeting recording.
+          </div>
+        </div>
+
+        {/* Recent Transcripts Display */}
+        {recentTranscripts.length > 0 && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Input level</span>
-              <span className="tabular-nums text-muted-foreground">{currentRms.toFixed(3)}</span>
-            </div>
-            <Progress value={Math.min(100, Math.round((currentRms / 0.05) * 100))} />
-            <div className="space-y-1">
-              <Label htmlFor="vad-threshold" className="text-sm text-muted-foreground">Sensitivity</Label>
-              <div className="flex items-center gap-3">
-                <Slider
-                  id="vad-threshold"
-                  min={0.005}
-                  max={0.05}
-                  step={0.001}
-                  value={[rmsThreshold]}
-                  onValueChange={(val) => {
-                    const v = Array.isArray(val) ? Number(val[0]) : Number(val);
-                    setRmsThreshold(v);
-                    vadThresholdRef.current = v;
-                  }}
-                  className="flex-1"
-                />
-                <div className="w-20 text-right text-sm tabular-nums">{rmsThreshold.toFixed(3)}</div>
-              </div>
-            </div>
-            <div className="text-xs text-muted-foreground">Chunks below the threshold are skipped to avoid sending silence.</div>
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm font-medium">Recent snippets</div>
-            <div className="rounded-md border p-3 max-h-64 overflow-auto">
-              {snippets.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No snippets yet. Start talking to see live updates…</div>
-              ) : (
-                <ul className="space-y-2">
-                  {snippets.slice(-20).map((s, i) => (
-                    <li key={i} className="text-sm leading-relaxed">{s}</li>
-                  ))}
-                  {pendingText ? (
-                    <li className="text-sm leading-relaxed text-muted-foreground">{pendingText}</li>
-                  ) : null}
-                </ul>
-              )}
+            <Label className="text-sm font-medium">Recent Transcripts</Label>
+            <div className="space-y-1 p-3 bg-muted/50 rounded-md">
+              {recentTranscripts.slice(-10).map((transcript) => (
+                <div key={transcript.seq} className="text-sm">
+                  <span className="text-xs text-muted-foreground">#{transcript.seq} {transcript.timestamp}</span>
+                  <div className="pl-2 text-foreground">{transcript.text}</div>
+                </div>
+              ))}
             </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
-
-

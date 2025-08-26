@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createAuthClient } from '@/utils/supabase/server'
+import { createAuthClient, createServiceClient } from '@/utils/supabase/server'
 import { SpeechClient } from '@google-cloud/speech'
+import { syncGoogleCalendarForOrg, shouldSyncForOrg } from '@/server/integrations/google-calendar-sync'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -73,6 +74,15 @@ export async function POST(request) {
 
         const orgId = orgRow.organization_id
 
+        // Optionally trigger background Google Calendar sync (hourly throttle)
+        try {
+          const shouldSync = await shouldSyncForOrg(orgId, 60 * 60 * 1000)
+          if (shouldSync) {
+            // Fire-and-forget, do not await
+            syncGoogleCalendarForOrg({ organizationId: orgId }).catch(() => { })
+          }
+        } catch (_) { }
+
         // Find or create today's session for this user
         const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
         const todayStart = new Date(today + 'T00:00:00.000Z')
@@ -124,14 +134,17 @@ export async function POST(request) {
           const today = new Date().toISOString().split('T')[0]
           const transcriptPath = `transcripts/${orgId}/${todaySession?.id || `${userId}-${today}`}.txt`
 
+          // Use service client for storage to avoid RLS issues
+          const svc = createServiceClient()
+
           // Download existing content (if any)
           let existingText = ''
           try {
-            const { data: fileData, error: downloadError } = await supabase.storage
+            const { data: fileData, error: downloadError } = await svc.storage
               .from('copilot.sh')
               .download(transcriptPath)
             if (downloadError) {
-              console.log('[transcribe] No existing transcript file, will create new:', transcriptPath)
+              console.log('[transcribe] No existing transcript file, will create new:', transcriptPath, downloadError?.message)
             } else if (fileData) {
               existingText = await fileData.text()
             }
@@ -151,10 +164,12 @@ export async function POST(request) {
           }
 
           if (shouldAppend) {
-            const newText = existingText ? `${existingText}\n\n${transcript}` : transcript
+            // Append as single-line entry with timestamp delimiter and no extra blank lines
+            const entry = `_TIMESTAMP_${timestamp}|${transcript}\n`
+            const newText = existingText ? `${existingText}${entry}` : entry
             const buffer = Buffer.from(newText, 'utf8')
 
-            const { error: uploadError } = await supabase.storage
+            const { error: uploadError } = await svc.storage
               .from('copilot.sh')
               .upload(transcriptPath, buffer, {
                 upsert: true,

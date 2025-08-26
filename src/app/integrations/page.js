@@ -3,14 +3,12 @@
 import { useState, useEffect } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { AuthenticatedNav } from "@/components/layout/authenticated-nav";
-import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import GoogleCalendarCard from "@/components/integrations/GoogleCalendarCard";
 import { LinkIcon } from "lucide-react";
 
 function IntegrationsContent() {
-  const { token } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">

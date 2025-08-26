@@ -506,7 +506,7 @@ CREATE POLICY "org members can read transcripts" ON storage.objects
   );
 
 -- Deletes/Updates (owners/admin/editor allowed): transcripts
-CREATE POLICY "editors can manage transcripts" ON storage.objects
+CREATE POLICY "org members can manage transcripts" ON storage.objects
   FOR ALL TO authenticated
   USING (
     bucket_id = 'copilot.sh'
@@ -516,7 +516,6 @@ CREATE POLICY "editors can manage transcripts" ON storage.objects
       FROM org o
       JOIN org_members om ON o.id = om.organization_id
       WHERE om.user_id = auth.uid()
-        AND om.role IN ('owner','admin','editor')
         AND o.id::text = split_part(name, '/', 2)
     )
   )
@@ -528,7 +527,6 @@ CREATE POLICY "editors can manage transcripts" ON storage.objects
       FROM org o
       JOIN org_members om ON o.id = om.organization_id
       WHERE om.user_id = auth.uid()
-        AND om.role IN ('owner','admin','editor')
         AND o.id::text = split_part(name, '/', 2)
     )
   );
