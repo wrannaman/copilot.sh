@@ -23,30 +23,63 @@ export async function POST(request) {
       return NextResponse.json({ message: 'Expected multipart/form-data' }, { status: 400 })
     }
     const form = await request.formData()
+    const mode = form.get('mode') || 'cloud'
     const file = form.get('chunk')
+    const browserText = form.get('text')
+    if (mode === 'browser' && typeof browserText === 'string' && browserText.trim()) {
+      // Short-circuit: trust browser-provided text
+      const transcript = browserText.trim()
+      return NextResponse.json({ text: transcript })
+    }
     if (!file || typeof file === 'string') {
       return NextResponse.json({ message: 'Missing audio chunk' }, { status: 400 })
     }
+    const mimeType = form.get('mimeType') || ''
     const arrayBuffer = await file.arrayBuffer()
     const audioBuffer = Buffer.from(arrayBuffer)
+    const sig4 = audioBuffer.subarray(0, 4)
+    const sigHex = sig4.toString('hex')
+    const sigAscii = (() => {
+      try { return audioBuffer.subarray(0, 4).toString('utf8') } catch { return '' }
+    })()
     console.log('🎤 [transcribe] processing chunk', {
-      bytes: audioBuffer.byteLength
+      bytes: audioBuffer.byteLength,
+      mimeType,
+      sigHex,
+      sigAscii
     })
 
     try {
       const speech = new SpeechClient()
-      const [resp] = await speech.recognize({
-        config: {
-          languageCode: 'en-US',
-          enableAutomaticPunctuation: true,
-          maxAlternatives: 1,
-          encoding: 'WEBM_OPUS',
-          sampleRateHertz: 48000,
-          model: 'latest_short',
-        },
-        audio: { content: audioBuffer.toString('base64') },
-      })
-      const results = resp.results || []
+      // Choose encoding based on header sniffing first, then mimeType
+      const isOgg = sigAscii === 'OggS'
+      const isWebm = sig4.equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+      let encoding = 'ENCODING_UNSPECIFIED'
+      if (isOgg || String(mimeType).includes('ogg')) encoding = 'OGG_OPUS'
+      else if (isWebm || String(mimeType).includes('webm')) encoding = 'WEBM_OPUS'
+
+      async function recognizeOnce(enc) {
+        const [r] = await speech.recognize({
+          config: {
+            languageCode: 'en-US',
+            enableAutomaticPunctuation: true,
+            maxAlternatives: 1,
+            encoding: enc,
+          },
+          audio: { content: audioBuffer.toString('base64') },
+        })
+        return r
+      }
+
+      let resp = await recognizeOnce(encoding)
+      // Fallback: if empty and encoding was unspecified, try both
+      if ((!resp?.results || resp.results.length === 0) && encoding === 'ENCODING_UNSPECIFIED') {
+        try { resp = await recognizeOnce('OGG_OPUS') } catch { }
+        if (!resp?.results || resp.results.length === 0) {
+          try { resp = await recognizeOnce('WEBM_OPUS') } catch { }
+        }
+      }
+      const results = resp?.results || []
       const transcript = results.map(r => r.alternatives?.[0]?.transcript || '').filter(Boolean).join(' ').trim()
       if (!transcript) {
         console.log('[transcribe] empty result', { resultCount: results.length })
