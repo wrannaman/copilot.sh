@@ -119,50 +119,56 @@ export async function POST(request) {
         if (transcript) {
           const timestamp = new Date().toISOString()
 
-          // Get existing transcript to append to
-          const { data: existingTranscript } = await supabase
-            .from('session_transcripts')
-            .select('text, segments_json')
-            .eq('session_id', todaySession.id)
-            .maybeSingle()
+          // Determine transcript file path: transcripts/<org>/<session_id>.txt
+          // Fallback to transcripts/<org>/<userId>-<date>.txt if session missing
+          const today = new Date().toISOString().split('T')[0]
+          const transcriptPath = `transcripts/${orgId}/${todaySession?.id || `${userId}-${today}`}.txt`
 
-          const existingText = existingTranscript?.text || ''
-          const existingSegments = Array.isArray(existingTranscript?.segments_json) ? existingTranscript.segments_json : []
+          // Download existing content (if any)
+          let existingText = ''
+          try {
+            const { data: fileData, error: downloadError } = await supabase.storage
+              .from('copilot.sh')
+              .download(transcriptPath)
+            if (downloadError) {
+              console.log('[transcribe] No existing transcript file, will create new:', transcriptPath)
+            } else if (fileData) {
+              existingText = await fileData.text()
+            }
+          } catch (downloadErr) {
+            console.log('[transcribe] Transcript download skipped:', downloadErr?.message)
+          }
 
-          // Simple deduplication: check if this transcript is very similar to recent content
+          // Simple deduplication: avoid appending if the last slice already contains the new text
           let shouldAppend = true
           if (existingText) {
             const recentSlice = existingText.slice(-500).toLowerCase()
             const currentText = transcript.toLowerCase()
             if (recentSlice.includes(currentText)) {
-              console.log('🔄 [transcribe] Skipping duplicate/overlapping content:', transcript)
+              console.log('🔄 [transcribe] Skipping duplicate/overlapping content in storage:', transcript)
               shouldAppend = false
             }
           }
 
           if (shouldAppend) {
             const newText = existingText ? `${existingText}\n\n${transcript}` : transcript
-            const newSegments = [...existingSegments, { ts: timestamp, text: transcript }]
+            const buffer = Buffer.from(newText, 'utf8')
 
-            // Insert structured segment
-            await supabase
-              .from('transcript_segments')
-              .insert({ session_id: todaySession.id, ts: timestamp, text: transcript })
+            const { error: uploadError } = await supabase.storage
+              .from('copilot.sh')
+              .upload(transcriptPath, buffer, {
+                upsert: true,
+                contentType: 'text/plain; charset=utf-8'
+              })
 
-            // Upsert the aggregate transcript
-            await supabase
-              .from('session_transcripts')
-              .upsert({
-                session_id: todaySession.id,
-                text: newText,
-                segments_json: newSegments,
-                words_json: null
-              }, { onConflict: 'session_id' })
-
-            console.log('✅ [transcribe] Appended transcript to daily session:', todaySession.id)
+            if (uploadError) {
+              console.error('❌ [transcribe] Failed to upload transcript to storage:', uploadError)
+            } else {
+              console.log('✅ [transcribe] Appended transcript to storage file:', transcriptPath)
+            }
           }
         } else {
-          console.log('[transcribe] No transcript to save for daily session:', todaySession.id)
+          console.log('[transcribe] No transcript text from recognizer; nothing to append')
         }
       } catch (e) {
         console.error('[transcribe] persist failed', e?.message)
