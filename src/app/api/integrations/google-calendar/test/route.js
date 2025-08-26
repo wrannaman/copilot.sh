@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAuthClient, createServiceClient } from '@/utils/supabase/server'
 
-export async function POST() {
+export async function POST(request) {
   try {
     const supabase = await createAuthClient()
     const { data, error } = await supabase.auth.getUser()
@@ -22,22 +22,30 @@ export async function POST() {
     }
 
     const service = createServiceClient()
-    const { data: integration } = await service
+    const url = new URL(request.url)
+    const email = url.searchParams.get('email')
+
+    let query = service
       .from('integrations')
       .select('access_json')
       .eq('organization_id', organizationId)
       .eq('type', 'google_calendar')
-      .single()
 
-    const email = integration?.access_json?.service_account_email || integration?.access_json?.email
-    if (!email) {
+    if (email) {
+      query = query.eq('account_email', email)
+    }
+
+    const { data: integration } = await query.single()
+
+    const resolvedEmail = integration?.access_json?.service_account_email || integration?.access_json?.email
+    if (!resolvedEmail) {
       return NextResponse.json({ error: 'Integration not configured', details: 'Missing service account email' }, { status: 400 })
     }
 
     return NextResponse.json({
       success: true,
       message: 'Google Calendar connection test OK',
-      email,
+      email: resolvedEmail,
       calendarsCount: 1,
     })
   } catch (e) {

@@ -108,12 +108,14 @@ export async function GET(request) {
 
     const service = createServiceClient()
     // Upsert integration (one per org/type)
+    const accountEmail = userinfo?.email || null
     const integrationData = {
       organization_id: organizationId,
       type: 'google_calendar',
       connected_by: user.id,
+      account_email: accountEmail,
       access_json: {
-        email: userinfo?.email || null,
+        email: accountEmail,
         tokens,
         setup_method: 'oauth',
         connected_at: new Date().toISOString()
@@ -123,7 +125,7 @@ export async function GET(request) {
 
     const { error: upsertError } = await service
       .from('integrations')
-      .upsert(integrationData, { onConflict: 'organization_id,type' })
+      .upsert(integrationData, { onConflict: 'organization_id,type,account_email' })
       .select('id')
       .single()
 

@@ -53,8 +53,7 @@ function RecordContent() {
   const maxRmsSinceLastChunkRef = useRef(0);
   const inflightRef = useRef(0);
   const chunkTimerRef = useRef(null);
-  const chunkLengthMsRef = useRef(4000); // Shorter chunks for more overlap
-  const overlapMsRef = useRef(1000); // 1 second overlap
+  const chunkLengthMsRef = useRef(5000);
   const isStartingRef = useRef(false);
   const retryCountRef = useRef(0);
   const maxRetriesRef = useRef(5);
@@ -237,12 +236,7 @@ function RecordContent() {
           }, chunkLengthMsRef.current);
 
           // Schedule next chunk with overlap (start before current chunk ends)
-          setTimeout(() => {
-            if (recordingRef.current && !isStartingRef.current && !recoveryInProgressRef.current) {
-              console.debug("[record] scheduling overlapping chunk");
-              scheduleNextChunk();
-            }
-          }, chunkLengthMsRef.current - overlapMsRef.current);
+          // Removed overlapTimerRef and overlapMsRef, so this block is removed.
 
         } catch (e) {
           console.error("[record] scheduleNextChunk error", e?.message);
@@ -289,6 +283,7 @@ function RecordContent() {
       }
       try { if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; } } catch { }
       try { if (chunkTimerRef.current) { clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; } } catch { }
+      // Removed overlapTimerRef.current = null;
       try { if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; } } catch { }
 
       try { audioCtxRef.current?.close?.(); } catch { }
@@ -613,6 +608,9 @@ function RecordContent() {
         try { if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop(); } catch { }
         chunkTimerRef.current = null;
       }, chunkLengthMsRef.current);
+
+      // Pre-schedule overlapping start for second chunk
+      // Removed overlapTimerRef.current = setTimeout(() => { ... }, chunkLengthMsRef.current - overlapMsRef.current);
       setStatus("recording");
       lastActivityRef.current = Date.now();
       console.debug("[record] recording started");
@@ -702,6 +700,7 @@ function RecordContent() {
           streamTracks: stream?.getTracks().length,
           timeSinceLastChunk,
           hasChunkTimer: !!chunkTimerRef.current,
+          hasOverlapTimer: false, // overlapTimerRef is removed
           hasVAD: !!vadIntervalRef.current,
           inflightChunks: inflightRef.current
         });
@@ -741,6 +740,7 @@ function RecordContent() {
     try { if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; } } catch { }
     try { audioCtxRef.current?.close?.(); } catch { }
     try { if (chunkTimerRef.current) { clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; } } catch { }
+    // Removed overlapTimerRef.current = null;
 
     // Stop monitoring systems
     if (healthCheckRef.current) {

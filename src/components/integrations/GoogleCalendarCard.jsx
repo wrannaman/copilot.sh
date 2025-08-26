@@ -19,9 +19,10 @@ export default function GoogleCalendarCard({ onRefresh }) {
   const { token } = useAuth();
   const { toast } = useToast();
   const [integration, setIntegration] = useState(null);
+  const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [syncingByEmail, setSyncingByEmail] = useState({});
+  const [testingByEmail, setTestingByEmail] = useState({});
   const [syncStatus, setSyncStatus] = useState(null);
   const [successToastShown, setSuccessToastShown] = useState(false);
 
@@ -32,18 +33,18 @@ export default function GoogleCalendarCard({ onRefresh }) {
     const urlParams = new URLSearchParams(window.location.search);
     const success = urlParams.get('success');
     console.log('[google-calendar] URL params:', { success, fullUrl: window.location.href });
-    
+
     if (success === 'google_calendar_connected' && !successToastShown) {
       console.log('[google-calendar] Showing success toast');
-      
+
       // Show success toast
       toast.success('Google Calendar connected successfully!', {
         description: 'Your Google Calendar has been connected and is ready to sync.'
       });
-      
+
       // Mark as shown to prevent duplicates
       setSuccessToastShown(true);
-      
+
       // Remove the parameter from URL without page reload
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
@@ -77,7 +78,7 @@ export default function GoogleCalendarCard({ onRefresh }) {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      
+
       console.log('[google-calendar-card] All integrations response:', {
         status: res.status,
         integrationCount: data?.length || 0,
@@ -85,9 +86,10 @@ export default function GoogleCalendarCard({ onRefresh }) {
       });
 
       if (res.ok) {
-        const gcalIntegration = data.find(item => item.type === 'google_calendar');
-        console.log('[google-calendar-card] Google Calendar integration found:', gcalIntegration);
-        setIntegration(gcalIntegration || null);
+        const gcalIntegrations = (Array.isArray(data) ? data : []).filter(item => item.type === 'google_calendar');
+        console.log('[google-calendar-card] Google Calendar integrations found:', gcalIntegrations);
+        setIntegrations(gcalIntegrations);
+        setIntegration(gcalIntegrations[0] || null);
       }
     } catch (error) {
       console.error('[google-calendar-card] Failed to check status:', error);
@@ -96,13 +98,11 @@ export default function GoogleCalendarCard({ onRefresh }) {
 
   const getSyncStatus = async () => {
     if (!integration) return;
-
     try {
       const res = await fetch(`${apiUrl}/integrations/google-calendar/sync`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-
       if (res.ok) {
         setSyncStatus(data);
       }
@@ -122,10 +122,12 @@ export default function GoogleCalendarCard({ onRefresh }) {
     }
   };
 
-  const handleSync = async () => {
-    setSyncing(true);
+  const handleSync = async (email) => {
+    setSyncingByEmail((s) => ({ ...s, [email || '__org__']: true }));
     try {
-      const res = await fetch(`${apiUrl}/integrations/google-calendar/sync`, {
+      const url = new URL(`${window.location.origin}${apiUrl}/integrations/google-calendar/sync`);
+      if (email) url.searchParams.set('email', email);
+      const res = await fetch(url.toString(), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -143,14 +145,16 @@ export default function GoogleCalendarCard({ onRefresh }) {
     } catch (error) {
       toast.error('Sync failed', { description: error.message });
     } finally {
-      setSyncing(false);
+      setSyncingByEmail((s) => ({ ...s, [email || '__org__']: false }));
     }
   };
 
-  const handleTest = async () => {
-    setTesting(true);
+  const handleTest = async (email) => {
+    setTestingByEmail((s) => ({ ...s, [email || '__org__']: true }));
     try {
-      const res = await fetch(`${apiUrl}/integrations/google-calendar/test`, {
+      const url = new URL(`${window.location.origin}${apiUrl}/integrations/google-calendar/test`);
+      if (email) url.searchParams.set('email', email);
+      const res = await fetch(url.toString(), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -167,7 +171,7 @@ export default function GoogleCalendarCard({ onRefresh }) {
     } catch (error) {
       toast.error('Connection test failed', { description: error.message });
     } finally {
-      setTesting(false);
+      setTestingByEmail((s) => ({ ...s, [email || '__org__']: false }));
     }
   };
 
@@ -192,7 +196,7 @@ export default function GoogleCalendarCard({ onRefresh }) {
     return new Date(dateString).toLocaleString();
   };
 
-  if (!integration) {
+  if (integrations.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -201,116 +205,85 @@ export default function GoogleCalendarCard({ onRefresh }) {
             Google Calendar
           </CardTitle>
           <CardDescription>
-            Connect your Google Calendar by sharing it with our service account. Click below to get started.
+            No Google Calendar accounts connected yet.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            onClick={handleConnect}
-            disabled={loading}
-            className="w-full"
-          >
-            {loading ? (
-              <>
-                <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              <>
-                <LinkIcon className="mr-2 h-4 w-4" />
-                Connect Google Calendar
-              </>
-            )}
-          </Button>
+          <div className="text-sm text-muted-foreground">Use the Connect button above to add an account.</div>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CalendarIcon className="h-5 w-5" />
-            Google Calendar
-          </div>
-          <Badge variant="secondary" className="bg-emerald-500 text-white dark:bg-emerald-600 gap-1">
-            <CheckIcon className="h-3.5 w-3.5" />
-            Connected
-          </Badge>
-        </CardTitle>
-        <CardDescription>
-          Connected to {integration.access_json?.email || integration.access_json?.service_account_email || 'Google Calendar'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {syncStatus && (
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-muted-foreground">Total Events</p>
-              <p className="font-medium">{syncStatus.totalEvents}</p>
+    <div className="grid gap-4">
+      {integrations.map((intg) => (
+        <Card key={intg.id}>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarIcon className="h-5 w-5" />
+                Google Calendar
+              </div>
+              <Badge variant="secondary" className="bg-emerald-500 text-white dark:bg-emerald-600 gap-1">
+                <CheckIcon className="h-3.5 w-3.5" />
+                Connected
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              {intg.account_email || intg.access_json?.email || 'Google Calendar'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => handleTest(intg.account_email || intg.access_json?.email)}
+                disabled={!!testingByEmail[intg.account_email || intg.access_json?.email]}
+                size="sm"
+              >
+                {testingByEmail[intg.account_email || intg.access_json?.email] ? (
+                  <>
+                    <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  'Test Connection'
+                )}
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => handleSync(intg.account_email || intg.access_json?.email)}
+                disabled={!!syncingByEmail[intg.account_email || intg.access_json?.email]}
+                size="sm"
+              >
+                {syncingByEmail[intg.account_email || intg.access_json?.email] ? (
+                  <>
+                    <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCwIcon className="mr-2 h-4 w-4" />
+                    Sync Now
+                  </>
+                )}
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={handleDisconnect}
+                size="sm"
+                className="text-destructive hover:text-destructive"
+              >
+                <XIcon className="mr-2 h-4 w-4" />
+                Disconnect
+              </Button>
             </div>
-            <div>
-              <p className="text-muted-foreground">Last Sync</p>
-              <p className="font-medium">{formatDate(syncStatus.lastSync)}</p>
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={handleTest}
-            disabled={testing}
-            size="sm"
-          >
-            {testing ? (
-              <>
-                <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
-                Testing...
-              </>
-            ) : (
-              'Test Connection'
-            )}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={handleSync}
-            disabled={syncing}
-            size="sm"
-          >
-            {syncing ? (
-              <>
-                <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
-                Syncing...
-              </>
-            ) : (
-              <>
-                <RefreshCwIcon className="mr-2 h-4 w-4" />
-                Sync Now
-              </>
-            )}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={handleDisconnect}
-            size="sm"
-            className="text-destructive hover:text-destructive"
-          >
-            <XIcon className="mr-2 h-4 w-4" />
-            Disconnect
-          </Button>
-        </div>
-
-        {syncStatus && syncStatus.recentEvents > 0 && (
-          <div className="text-xs text-muted-foreground border-t pt-3">
-            {syncStatus.recentEvents} events synced in the last 7 days
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 }

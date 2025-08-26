@@ -26,7 +26,7 @@ export async function GET() {
     const service = createServiceClient()
     const { data: integrations, error: integrationsError } = await service
       .from('integrations')
-      .select('id, type, access_json, created_at, updated_at')
+      .select('id, type, account_email, access_json, created_at, updated_at')
       .eq('organization_id', organizationId)
 
     if (integrationsError) throw integrationsError
@@ -35,7 +35,7 @@ export async function GET() {
     const enriched = (integrations || []).map((i) => ({
       ...i,
       status: i?.access_json?.tokens ? 'connected' : 'disconnected',
-      email: i?.access_json?.email || null
+      email: i?.account_email || i?.access_json?.email || null
     }))
 
     return NextResponse.json(enriched)

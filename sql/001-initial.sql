@@ -101,12 +101,23 @@ CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE TABLE IF NOT EXISTS session_transcripts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  text TEXT,                   -- full transcript
-  words_json JSONB,            -- optional per-word timing if you add it later
+  text TEXT,                   -- full transcript (denormalized)
+  segments_json JSONB NOT NULL DEFAULT '[]', -- array of { ts: ISO8601, text }
+  words_json JSONB,            -- optional per-word timing
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_transcript ON session_transcripts(session_id);
+
+-- Structured per-chunk transcript storage
+CREATE TABLE IF NOT EXISTS transcript_segments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  ts TIMESTAMPTZ NOT NULL,
+  text TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_segments_session_ts ON transcript_segments(session_id, ts DESC);
 
 -- ----------------------------------------------------------------------------
 -- Grants for server (service_role) to manage orgs and memberships
@@ -115,8 +126,9 @@ GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org_members TO service_role;
 GRANT SELECT ON TABLE org_invites TO service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE transcript_segments TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_events TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integrations TO service_role;
 
@@ -148,11 +160,12 @@ CREATE TABLE IF NOT EXISTS integrations (
   organization_id UUID NOT NULL REFERENCES org(id) ON DELETE CASCADE,
   type integration_type NOT NULL,
   connected_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  account_email TEXT,
   access_json JSONB NOT NULL DEFAULT '{}'::jsonb, -- store minimal tokens/ids; prefer KMS/VAULT in prod
   scopes TEXT[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(organization_id, type)
+  UNIQUE(organization_id, type, account_email)
 );
 
 CREATE INDEX IF NOT EXISTS idx_integrations_org_type ON integrations(organization_id, type);
@@ -316,6 +329,10 @@ CREATE POLICY "owners manage invites" ON org_invites
   );
 
 -- sessions
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_transcripts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transcript_segments ENABLE ROW LEVEL SECURITY;
+
 CREATE POLICY "org members select sessions" ON sessions
   FOR SELECT USING (
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
@@ -362,6 +379,20 @@ CREATE POLICY "editors manage transcripts" ON session_transcripts
                    WHERE om.user_id = auth.uid())
   );
 
+-- transcript_segments follow session
+CREATE POLICY "org members select transcript segments" ON transcript_segments
+  FOR SELECT USING (
+    session_id IN (SELECT s.id FROM sessions s 
+                   JOIN org_members om ON s.organization_id = om.organization_id
+                   WHERE om.user_id = auth.uid())
+  );
+CREATE POLICY "editors manage transcript segments" ON transcript_segments
+  FOR ALL USING (
+    session_id IN (SELECT s.id FROM sessions s 
+                   JOIN org_members om ON s.organization_id = om.organization_id
+                   WHERE om.user_id = auth.uid())
+  );
+
 -- (digests/chunks policies removed)
 
 -- calendar_events
@@ -395,18 +426,6 @@ CREATE POLICY "owners delete integrations" ON integrations
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
   );
 
--- Policies for deleted tables removed
-
--- ----------------------------------------------------------------------------
--- RPCs: Functions for future RAG features (when needed)
--- ----------------------------------------------------------------------------
--- (match functions removed - will add back when we implement RAG)
-
--- (jobs policies removed)
-
--- (outbound policies removed)
-
--- (audit policies removed)
 
 -- ----------------------------------------------------------------------------
 -- Storage: private bucket `copilot.sh` with org/session-scoped paths

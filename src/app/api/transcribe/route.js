@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createAuthClient, createClient as createServiceClient } from '@/utils/supabase/server'
+import { createAuthClient } from '@/utils/supabase/server'
 import { SpeechClient } from '@google-cloud/speech'
 
 export const runtime = 'nodejs'
@@ -54,11 +54,10 @@ export async function POST(request) {
 
       // Daily session approach - create/find today's session for the user
       try {
-        const service = await createServiceClient()
         const userId = data.user.id
 
-        // Get user's organization - they MUST have one
-        const { data: orgRow, error: orgError } = await service
+        // Get user's organization - they MUST have one  
+        const { data: orgRow, error: orgError } = await supabase
           .from('org_members')
           .select('organization_id')
           .eq('user_id', userId)
@@ -79,7 +78,7 @@ export async function POST(request) {
         const todayStart = new Date(today + 'T00:00:00.000Z')
         const todayEnd = new Date(today + 'T23:59:59.999Z')
 
-        let { data: todaySession } = await service
+        let { data: todaySession } = await supabase
           .from('sessions')
           .select('id, title')
           .eq('organization_id', orgId)
@@ -93,7 +92,7 @@ export async function POST(request) {
         if (!todaySession) {
           console.log('[transcribe] Creating daily session for', today)
           const sessionTitle = `Conversations - ${today}`
-          const { data: inserted, error: insertError } = await service
+          const { data: inserted, error: insertError } = await supabase
             .from('sessions')
             .insert({
               organization_id: orgId,
@@ -121,40 +120,43 @@ export async function POST(request) {
           const timestamp = new Date().toISOString()
 
           // Get existing transcript to append to
-          const { data: existingTranscript } = await service
+          const { data: existingTranscript } = await supabase
             .from('session_transcripts')
-            .select('text')
+            .select('text, segments_json')
             .eq('session_id', todaySession.id)
             .maybeSingle()
 
           const existingText = existingTranscript?.text || ''
+          const existingSegments = Array.isArray(existingTranscript?.segments_json) ? existingTranscript.segments_json : []
 
           // Simple deduplication: check if this transcript is very similar to recent content
           let shouldAppend = true
           if (existingText) {
-            const recentLines = existingText.split('\n').slice(-3) // Check last 3 lines
-            const recentText = recentLines.join(' ').toLowerCase()
+            const recentSlice = existingText.slice(-500).toLowerCase()
             const currentText = transcript.toLowerCase()
-
-            // If there's significant overlap, skip this chunk
-            if (recentText.includes(currentText) || currentText.includes(recentText)) {
+            if (recentSlice.includes(currentText)) {
               console.log('🔄 [transcribe] Skipping duplicate/overlapping content:', transcript)
               shouldAppend = false
             }
           }
 
           if (shouldAppend) {
-            const newText = existingText
-              ? `${existingText}\n\n[${timestamp}] ${transcript}`
-              : `[${timestamp}] ${transcript}`
+            const newText = existingText ? `${existingText}\n\n${transcript}` : transcript
+            const newSegments = [...existingSegments, { ts: timestamp, text: transcript }]
 
-            // Upsert the transcript
-            await service
+            // Insert structured segment
+            await supabase
+              .from('transcript_segments')
+              .insert({ session_id: todaySession.id, ts: timestamp, text: transcript })
+
+            // Upsert the aggregate transcript
+            await supabase
               .from('session_transcripts')
               .upsert({
                 session_id: todaySession.id,
                 text: newText,
-                words_json: []
+                segments_json: newSegments,
+                words_json: null
               }, { onConflict: 'session_id' })
 
             console.log('✅ [transcribe] Appended transcript to daily session:', todaySession.id)
