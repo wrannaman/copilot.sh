@@ -109,16 +109,6 @@ CREATE TABLE IF NOT EXISTS session_transcripts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_transcript ON session_transcripts(session_id);
 
--- Structured per-chunk transcript storage
-CREATE TABLE IF NOT EXISTS transcript_segments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  ts TIMESTAMPTZ NOT NULL,
-  text TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_segments_session_ts ON transcript_segments(session_id, ts DESC);
-
 -- ----------------------------------------------------------------------------
 -- Grants for server (service_role) to manage orgs and memberships
 -- ----------------------------------------------------------------------------
@@ -128,7 +118,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org_members TO service_role;
 GRANT SELECT ON TABLE org_invites TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO authenticated, service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE transcript_segments TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_events TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integrations TO service_role;
 
@@ -331,7 +320,6 @@ CREATE POLICY "owners manage invites" ON org_invites
 -- sessions
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_transcripts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transcript_segments ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "org members select sessions" ON sessions
   FOR SELECT USING (
@@ -379,19 +367,7 @@ CREATE POLICY "editors manage transcripts" ON session_transcripts
                    WHERE om.user_id = auth.uid())
   );
 
--- transcript_segments follow session
-CREATE POLICY "org members select transcript segments" ON transcript_segments
-  FOR SELECT USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
-CREATE POLICY "editors manage transcript segments" ON transcript_segments
-  FOR ALL USING (
-    session_id IN (SELECT s.id FROM sessions s 
-                   JOIN org_members om ON s.organization_id = om.organization_id
-                   WHERE om.user_id = auth.uid())
-  );
+-- transcript segments removed; using storage-based transcripts
 
 -- (digests/chunks policies removed)
 
@@ -440,7 +416,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Helpers for path checks
 -- NOTE: storage.foldername(name) is available in Supabase; we’ll use split_part here for clarity.
 
--- Uploads (INSERT)
+-- Uploads (INSERT): audio
 CREATE POLICY "org members can upload session audio" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -456,7 +432,7 @@ CREATE POLICY "org members can upload session audio" ON storage.objects
     )
   );
 
--- Reads (SELECT)
+-- Reads (SELECT): audio
 CREATE POLICY "org members can read session audio" ON storage.objects
   FOR SELECT TO authenticated
   USING (
@@ -471,7 +447,7 @@ CREATE POLICY "org members can read session audio" ON storage.objects
     )
   );
 
--- Deletes/Updates (owners/admin/editor allowed)
+-- Deletes/Updates (owners/admin/editor allowed): audio
 CREATE POLICY "editors can manage session audio" ON storage.objects
   FOR ALL TO authenticated
   USING (
@@ -489,6 +465,64 @@ CREATE POLICY "editors can manage session audio" ON storage.objects
   WITH CHECK (
     bucket_id = 'copilot.sh'
     AND split_part(name, '/', 1) = 'audio'
+    AND EXISTS (
+      SELECT 1
+      FROM org o
+      JOIN org_members om ON o.id = om.organization_id
+      WHERE om.user_id = auth.uid()
+        AND om.role IN ('owner','admin','editor')
+        AND o.id::text = split_part(name, '/', 2)
+    )
+  );
+
+-- Uploads (INSERT): transcripts
+CREATE POLICY "org members can upload transcripts" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'copilot.sh'
+    AND split_part(name, '/', 1) = 'transcripts'
+    AND EXISTS (
+      SELECT 1
+      FROM org o
+      JOIN org_members om ON o.id = om.organization_id
+      WHERE om.user_id = auth.uid()
+        AND o.id::text = split_part(name, '/', 2)
+    )
+  );
+
+-- Reads (SELECT): transcripts
+CREATE POLICY "org members can read transcripts" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'copilot.sh'
+    AND split_part(name, '/', 1) = 'transcripts'
+    AND EXISTS (
+      SELECT 1
+      FROM org o
+      JOIN org_members om ON o.id = om.organization_id
+      WHERE om.user_id = auth.uid()
+        AND o.id::text = split_part(name, '/', 2)
+    )
+  );
+
+-- Deletes/Updates (owners/admin/editor allowed): transcripts
+CREATE POLICY "editors can manage transcripts" ON storage.objects
+  FOR ALL TO authenticated
+  USING (
+    bucket_id = 'copilot.sh'
+    AND split_part(name, '/', 1) = 'transcripts'
+    AND EXISTS (
+      SELECT 1
+      FROM org o
+      JOIN org_members om ON o.id = om.organization_id
+      WHERE om.user_id = auth.uid()
+        AND om.role IN ('owner','admin','editor')
+        AND o.id::text = split_part(name, '/', 2)
+    )
+  )
+  WITH CHECK (
+    bucket_id = 'copilot.sh'
+    AND split_part(name, '/', 1) = 'transcripts'
     AND EXISTS (
       SELECT 1
       FROM org o
