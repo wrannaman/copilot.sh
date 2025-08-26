@@ -41,6 +41,8 @@ function RecordContent() {
   // Media + analysis - initialize with proper values to avoid type issues
   const streamRef = useRef(/** @type {MediaStream | null} */(null));
   const recRef = useRef(/** @type {MediaRecorder | null} */(null));
+  // Per-window MediaRecorders for rolling windows
+  const windowRecordersRef = useRef(/** @type {Array<{ rec: MediaRecorder, stopId: number | null, startHi: number }>} */([]));
 
   // Timing
   const recStartEpochRef = useRef(/** @type {number} */(0));   // performance.now() at start
