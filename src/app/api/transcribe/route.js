@@ -3,6 +3,7 @@ import { createAuthClient, createServiceClient } from '@/utils/supabase/server'
 import { SpeechClient } from '@google-cloud/speech'
 import fs from 'node:fs'
 import { syncGoogleCalendarForOrg, shouldSyncForOrg } from '@/server/integrations/google-calendar-sync'
+import { embedTexts } from '@/server/ai/embedding'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -245,6 +246,30 @@ export async function POST(request) {
             } else {
               console.log('✅ [transcribe] Appended transcript to storage file:', transcriptPath)
             }
+          }
+
+          // Also persist a searchable chunk with embedding
+          try {
+            const [embedding] = await embedTexts([transcript])
+            if (Array.isArray(embedding) && embedding.length > 0 && todaySession?.id) {
+              const { error: chunkError } = await supabase
+                .from('session_chunks')
+                .insert({
+                  session_id: todaySession.id,
+                  content: transcript,
+                  start_time_seconds: null,
+                  end_time_seconds: null,
+                  speaker_tag: null,
+                  embedding
+                })
+              if (chunkError) {
+                console.error('❌ [transcribe] Failed to insert session chunk:', chunkError)
+              } else {
+                console.log('✅ [transcribe] Inserted session chunk with embedding')
+              }
+            }
+          } catch (embedErr) {
+            console.error('❌ [transcribe] Embedding/chunk insert failed:', embedErr?.message)
           }
         } else {
           console.log('[transcribe] No transcript text from recognizer; nothing to append')

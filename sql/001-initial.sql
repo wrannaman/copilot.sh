@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS session_transcripts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_transcript ON session_transcripts(session_id);
 
+-- Chunked transcript with embeddings for search (per session)
+CREATE TABLE IF NOT EXISTS session_chunks (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  start_time_seconds INTEGER,
+  end_time_seconds INTEGER,
+  speaker_tag TEXT,
+  embedding VECTOR(768),
+  ts tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(content, ''))) STORED,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_chunks_session ON session_chunks(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_chunks_created ON session_chunks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_chunks_ts ON session_chunks USING GIN (ts);
+-- Cosine distance index for pgvector (tune lists as needed)
+CREATE INDEX IF NOT EXISTS idx_session_chunks_embedding ON session_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
 -- ----------------------------------------------------------------------------
 -- Grants for server (service_role) to manage orgs and memberships
 -- ----------------------------------------------------------------------------
@@ -118,8 +137,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org_members TO service_role;
 GRANT SELECT ON TABLE org_invites TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO authenticated, service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_events TO service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integrations TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_chunks TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Calendar mirror (lightweight; read-only link to GCal)
@@ -140,6 +158,9 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_cal_events_org ON calendar_events(organization_id);
 CREATE INDEX IF NOT EXISTS idx_cal_events_time ON calendar_events(starts_at, ends_at);
 
+-- Grants for calendar_events
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_events TO service_role;
+
 -- ----------------------------------------------------------------------------
 -- Integrations (Notion, Google Calendar, Gmail)
 -- Store tokens encrypted or via external secrets; keep minimal here.
@@ -158,6 +179,9 @@ CREATE TABLE IF NOT EXISTS integrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_integrations_org_type ON integrations(organization_id, type);
+
+-- Grants for integrations
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integrations TO service_role;
 
 -- (processing jobs removed for simplification)
 
@@ -270,6 +294,7 @@ ALTER TABLE org_members            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_invites            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_transcripts    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_chunks         ENABLE ROW LEVEL SECURITY;
 -- (digests/chunks removed)
 ALTER TABLE calendar_events        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integrations           ENABLE ROW LEVEL SECURITY;
@@ -365,6 +390,30 @@ CREATE POLICY "editors manage transcripts" ON session_transcripts
     session_id IN (SELECT s.id FROM sessions s 
                    JOIN org_members om ON s.organization_id = om.organization_id
                    WHERE om.user_id = auth.uid())
+  );
+
+-- session_chunks follow session
+CREATE POLICY "org members select chunks" ON session_chunks
+  FOR SELECT USING (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "editors manage chunks" ON session_chunks
+  FOR ALL USING (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid()
+    )
+  ) WITH CHECK (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid()
+    )
   );
 
 -- transcript segments removed; using storage-based transcripts
@@ -546,6 +595,46 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticate
 GRANT EXECUTE ON FUNCTION my_organizations() TO authenticated;
 GRANT EXECUTE ON FUNCTION ensure_current_user_org(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_org_users(UUID) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Semantic search RPC: match_session_chunks
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION match_session_chunks(
+  match_count INT,
+  match_threshold FLOAT,
+  query_embedding VECTOR(768),
+  session_ids UUID[]
+) RETURNS TABLE (
+  id UUID,
+  session_id UUID,
+  content TEXT,
+  start_time_seconds INT,
+  end_time_seconds INT,
+  speaker_tag TEXT,
+  created_at TIMESTAMPTZ,
+  similarity FLOAT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    sc.id,
+    sc.session_id,
+    sc.content,
+    sc.start_time_seconds,
+    sc.end_time_seconds,
+    sc.speaker_tag,
+    sc.created_at,
+    1 - (sc.embedding <=> query_embedding) AS similarity
+  FROM session_chunks sc
+  WHERE sc.session_id = ANY(session_ids)
+    AND sc.embedding IS NOT NULL
+    AND (1 - (sc.embedding <=> query_embedding)) >= match_threshold
+  ORDER BY sc.embedding <=> query_embedding ASC
+  LIMIT match_count;
+$$;
+
+GRANT EXECUTE ON FUNCTION match_session_chunks(INT, FLOAT, VECTOR, UUID[]) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Minimal Search Function (semantic + optional time range filter)
