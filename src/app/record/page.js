@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Mic, Square, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useTranscriptionStore } from "@/stores/transcription";
 
 export default function RecordPage() {
@@ -30,8 +31,10 @@ function RecordContent() {
     textArray,
     currentPartial,
     recentTranscripts,
+    errorMessage,
+    clearError,
     startRecording,
-    stopRecording,
+    stopAndFlush,
     sendText
   } = useTranscriptionStore();
 
@@ -75,7 +78,7 @@ function RecordContent() {
             {isRecording ? (
               <span className="inline-flex items-center gap-2 text-green-600">
                 <span className="h-2 w-2 rounded-full bg-green-500" />
-                Recording • Sends every 10s
+                Recording • Sends every 5s
               </span>
             ) : isSending ? (
               <span className="inline-flex items-center gap-2">
@@ -93,17 +96,10 @@ function RecordContent() {
               </Button>
             ) : (
               <Button onClick={async () => {
-                // Stop timers/recognition first to avoid double-sends from the interval
-                stopRecording();
-                const finalText = [
-                  ...textArray,
-                  (currentPartial && currentPartial.trim()) ? currentPartial.trim() : null
-                ].filter(Boolean).join(' ').trim();
-                if (!finalText) return;
                 try {
-                  await sendText(finalText);
+                  await stopAndFlush();
                 } catch (e) {
-                  console.error('[STOP SEND] failed:', e);
+                  console.error('[STOP FLUSH] failed:', e);
                 }
               }} size="icon" variant="destructive" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
                 <Square className="h-7 w-7 sm:h-8 sm:w-8" />
@@ -111,6 +107,18 @@ function RecordContent() {
             )}
           </div>
         </div>
+        {errorMessage && (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 text-destructive p-3 text-sm flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 mt-0.5" />
+            <div className="flex-1">{errorMessage}</div>
+            <button
+              onClick={clearError}
+              className="text-xs underline decoration-dotted hover:no-underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {/* Microphone selector */}
         <div className="flex items-center gap-3">
           <Label className="text-sm text-muted-foreground">Microphone</Label>

@@ -338,15 +338,34 @@ export async function POST(request) {
           }
         }
 
-        // Also persist a searchable chunk with embedding
+        // Also persist a searchable chunk with context-augmented embedding
         try {
-          const [embedding] = await embedTexts([transcript])
+          // Fetch the immediately previous chunk to add light overlap context to the embedding only
+          let contextPrefix = ''
+          try {
+            const { data: lastChunk } = await supabase
+              .from('session_chunks')
+              .select('content, created_at')
+              .eq('session_id', todaySession.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            if (lastChunk?.content) {
+              // Use a small tail to preserve sentence continuity without changing stored content
+              const CONTEXT_CHARS = 400
+              contextPrefix = String(lastChunk.content).slice(-CONTEXT_CHARS)
+            }
+          } catch (_) { }
+
+          const augmented = contextPrefix ? `${contextPrefix}\n${transcript}` : transcript
+          const [embedding] = await embedTexts([augmented])
+
           if (Array.isArray(embedding) && embedding.length > 0 && todaySession?.id) {
             const { error: chunkError } = await supabase
               .from('session_chunks')
               .insert({
                 session_id: todaySession.id,
-                content: transcript,
+                content: transcript, // store original content unchanged
                 start_time_seconds: null,
                 end_time_seconds: null,
                 speaker_tag: null,
@@ -355,7 +374,7 @@ export async function POST(request) {
             if (chunkError) {
               console.error('❌ [transcribe] Failed to insert session chunk:', chunkError)
             } else {
-              console.log('✅ [transcribe] Inserted session chunk with embedding')
+              console.log('✅ [transcribe] Inserted session chunk with context-augmented embedding')
             }
           }
         } catch (embedErr) {

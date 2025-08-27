@@ -42,6 +42,23 @@ export async function GET(request) {
       return NextResponse.redirect(new URL('/error?code=org_init_failed', request.url))
     }
 
+    // Notify Slack once on fresh signup (within 30s of account creation)
+    try {
+      const webhook = process.env.SLACK_WEBHOOK_URL
+      if (webhook && user.created_at) {
+        const createdAt = new Date(user.created_at)
+        const isRecent = (Date.now() - createdAt.getTime()) <= 30_000
+        if (isRecent) {
+          const email = user.email || 'unknown'
+          await fetch(webhook, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: `copilot.sh - ${email} signed up` })
+          })
+        }
+      }
+    } catch { }
+
     const res = NextResponse.redirect(new URL(next, request.url))
     res.cookies.set('org_id', String(orgId), {
       httpOnly: true,

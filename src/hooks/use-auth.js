@@ -168,8 +168,6 @@ export function AuthProvider({ children }) {
         if (!error && session) {
           store.setSession(session)
           store.setUser(session.user)
-
-          // Defer organization fetch to avoid blocking initialization
           setTimeout(async () => {
             try {
               await store.ensureOrganization();
@@ -177,13 +175,6 @@ export function AuthProvider({ children }) {
               console.error("❌ [AUTH] Failed to ensure organization during init:", error);
             }
           }, 0)
-
-          // Best-effort Slack notification when a session exists
-          try {
-            if (session?.user?.email) {
-              fetch('/api/notify-signup', { method: 'POST' }).catch(() => { })
-            }
-          } catch { }
         }
 
         store.setLoading(false)

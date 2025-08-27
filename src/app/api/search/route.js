@@ -90,98 +90,80 @@ export async function POST(req) {
       });
     }
 
-    // Use the existing match_session_chunks RPC function
-    const { data: chunks, error: chunksError } = await supabase.rpc('match_session_chunks', {
-      query_embedding: queryEmbedding,
-      session_ids: filteredSessionIds,
-      match_threshold: 0.6, // Lower threshold for more results
-      match_count: limit
-    });
+    // Run BOTH semantic vector search and keyword search, then fuse with RRF
+    const [{ data: vectorResults, error: vectorError }, { data: keywordResults, error: keywordError }] = await Promise.all([
+      supabase.rpc('match_session_chunks', {
+        query_embedding: queryEmbedding,
+        session_ids: filteredSessionIds,
+        match_threshold: 0.6,
+        match_count: limit
+      }),
+      supabase
+        .from('session_chunks')
+        .select('id, session_id, content, start_time_seconds, end_time_seconds, speaker_tag, created_at')
+        .in('session_id', filteredSessionIds)
+        .textSearch('ts', query, { type: 'websearch', config: 'english' })
+        .limit(limit)
+        .order('created_at', { ascending: false })
+    ]);
 
-    if (chunksError) {
-      console.error('❌ Error matching chunks:', chunksError);
+    if (vectorError) {
+      console.error('❌ Error matching chunks (vector):', vectorError);
       return NextResponse.json({ error: 'Search failed' }, { status: 500 });
     }
-
-    if (!chunks || chunks.length === 0) {
-      // Fallback: keyword full-text search on chunks within the same session scope
-      try {
-        const { data: keywordChunks, error: keywordError } = await supabase
-          .from('session_chunks')
-          .select('id, session_id, content, start_time_seconds, end_time_seconds, speaker_tag, created_at')
-          .in('session_id', filteredSessionIds)
-          .textSearch('ts', query, { type: 'websearch', config: 'english' })
-          .limit(limit)
-          .order('created_at', { ascending: false });
-
-        if (keywordError) {
-          console.warn('⚠️ Keyword fallback failed:', keywordError);
-        }
-
-        if (!keywordChunks || keywordChunks.length === 0) {
-          return NextResponse.json({
-            results: [],
-            message: 'No matching content found'
-          });
-        }
-
-        const keywordEnriched = keywordChunks.map(chunk => {
-          const session = sessions.find(s => s.id === chunk.session_id);
-          return {
-            ...chunk,
-            session_title: session?.title,
-            session_created_at: session?.created_at,
-            session_started_at: session?.started_at,
-            session_duration_seconds: session?.duration_seconds,
-            created_at: session?.created_at || chunk.created_at,
-            similarity: 0.75 // heuristic similarity for keyword matches
-          };
-        });
-
-        // Return early with keyword-based results
-        const sessionGroups = {};
-        keywordEnriched.forEach(result => {
-          if (!sessionGroups[result.session_id]) sessionGroups[result.session_id] = [];
-          sessionGroups[result.session_id].push(result);
-        });
-
-        console.log('✅ SEARCH RESULTS (fallback) →', {
-          totalChunks: keywordEnriched.length,
-          sessionsMatched: Object.keys(sessionGroups).length
-        });
-
-        return NextResponse.json({
-          results: keywordEnriched,
-          metadata: {
-            totalResults: keywordEnriched.length,
-            sessionsSearched: filteredSessionIds.length,
-            sessionsMatched: Object.keys(sessionGroups).length,
-            query,
-            filters,
-            searchType: 'keyword_fallback'
-          }
-        });
-      } catch (fallbackErr) {
-        console.warn('⚠️ Keyword fallback threw:', fallbackErr);
-        return NextResponse.json({
-          results: [],
-          message: 'No matching content found'
-        });
-      }
+    if (keywordError) {
+      console.warn('⚠️ Keyword search issue:', keywordError);
     }
 
-    // Enrich results with session metadata
-    const enrichedResults = chunks.map(chunk => {
-      const session = sessions.find(s => s.id === chunk.session_id);
+    const safeVector = Array.isArray(vectorResults) ? vectorResults : [];
+    const safeKeyword = Array.isArray(keywordResults) ? keywordResults : [];
+
+    // Helper to enrich with session metadata
+    function enrich(row) {
+      const session = sessions.find(s => s.id === row.session_id);
       return {
-        ...chunk,
+        ...row,
         session_title: session?.title,
         session_created_at: session?.created_at,
         session_started_at: session?.started_at,
         session_duration_seconds: session?.duration_seconds,
-        created_at: session?.created_at || chunk.created_at
+        created_at: session?.created_at || row.created_at
       };
-    });
+    }
+
+    const enrichedVector = safeVector.map(enrich);
+    const enrichedKeyword = safeKeyword.map(r => enrich({ ...r, similarity: 0.75 }));
+
+    // RRF fusion
+    const k = 60;
+    const rrfMap = new Map(); // id -> { row, score }
+
+    for (let i = 0; i < enrichedVector.length; i++) {
+      const row = enrichedVector[i];
+      const score = 1 / (k + (i + 1));
+      const existing = rrfMap.get(row.id);
+      if (!existing) rrfMap.set(row.id, { row, score, hasVector: true });
+      else rrfMap.set(row.id, { ...existing, score: existing.score + score, row: { ...existing.row, ...row }, hasVector: true });
+    }
+
+    for (let i = 0; i < enrichedKeyword.length; i++) {
+      const row = enrichedKeyword[i];
+      const score = 1 / (k + (i + 1));
+      const existing = rrfMap.get(row.id);
+      if (!existing) rrfMap.set(row.id, { row, score, hasVector: false });
+      else rrfMap.set(row.id, { ...existing, score: existing.score + score, row: { ...row, ...existing.row } });
+    }
+
+    let fused = Array.from(rrfMap.values()).map(v => ({ ...v.row, rrf_score: v.score }));
+    if (fused.length === 0) {
+      return NextResponse.json({
+        results: [],
+        message: 'No matching content found'
+      });
+    }
+
+    fused.sort((a, b) => (b.rrf_score || 0) - (a.rrf_score || 0));
+    const enrichedResults = fused.slice(0, limit);
 
     // Attach calendar event attribution if possible by computing absolute timestamps
     try {
@@ -200,12 +182,15 @@ export async function POST(req) {
         const minTs = Math.min(...timestamps);
         const maxTs = Math.max(...timestamps);
 
+        const minIso = new Date(minTs).toISOString();
+        const maxIso = new Date(maxTs).toISOString();
+
+        // Include events where ends_at is null (open-ended) as overlapping
         const { data: events, error: eventsError } = await supabase
           .from('calendar_events')
           .select('id,title,starts_at,ends_at')
           .eq('organization_id', organizationId)
-          .lte('starts_at', new Date(maxTs).toISOString())
-          .gte('ends_at', new Date(minTs).toISOString())
+          .or(`and(starts_at.lte.${maxIso},ends_at.gte.${minIso}),and(starts_at.lte.${maxIso},ends_at.is.null)`)
           .order('starts_at', { ascending: true });
 
         if (!eventsError && Array.isArray(events) && events.length) {
@@ -214,15 +199,16 @@ export async function POST(req) {
             const baseMs = baseIso ? new Date(baseIso).getTime() : NaN;
             if (Number.isNaN(baseMs)) continue;
             const tsMs = baseMs + (r.start_time_seconds || 0) * 1000;
-            const match = events.find((ev) => {
+            const overlapping = events.filter((ev) => {
               const s = ev.starts_at ? new Date(ev.starts_at).getTime() : null;
               const e = ev.ends_at ? new Date(ev.ends_at).getTime() : null;
               if (s == null) return false;
               if (e == null) return tsMs >= s; // open-ended
               return tsMs >= s && tsMs <= e;
             });
-            if (match) {
-              r.calendar_event = match;
+            if (overlapping.length > 0) {
+              r.calendar_events = overlapping;
+              r.calendar_event = overlapping[0];
             }
           }
         }
@@ -240,8 +226,8 @@ export async function POST(req) {
       sessionGroups[result.session_id].push(result);
     });
 
-    console.log('✅ SEARCH RESULTS →', {
-      totalChunks: chunks.length,
+    console.log('✅ SEARCH RESULTS (hybrid_rrf) →', {
+      totalChunks: enrichedResults.length,
       sessionsMatched: Object.keys(sessionGroups).length
     });
 
@@ -252,7 +238,8 @@ export async function POST(req) {
         sessionsSearched: filteredSessionIds.length,
         sessionsMatched: Object.keys(sessionGroups).length,
         query,
-        filters
+        filters,
+        searchType: 'hybrid_rrf'
       }
     });
 
