@@ -8,6 +8,8 @@
 
 ## What is copilot.sh?
 
+This is a mono repo with mobile, web, and embedded device  (raspberry pi)
+
 **copilot.sh** is an **open-source ambient AI recorder**.  
 Capture conversations → tag with Google Calendar → filter with custom prompts → push to Notion/Docs → search everything later. Uses nextjs as a front end and supabase backend.
 
@@ -53,9 +55,10 @@ Most “AI memory” tools are closed, expensive, or creepy.
 
 ## Quick Start
 
-### 1. Clone + Install
+### 1. Clone + Install Web
 
 ```bash
+cd web
 cp .env.example .env
 # create a google service account and download the credentials.json file into ./credentials/google.json
 ```
