@@ -459,6 +459,35 @@ CREATE POLICY "owners delete integrations" ON integrations
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
   );
 
+-- device_api_keys
+ALTER TABLE device_api_keys ENABLE ROW LEVEL SECURITY;
+
+-- Allow owners/admins/editors to view keys; viewers have no access
+CREATE POLICY "org members select device keys" ON device_api_keys
+  FOR SELECT TO authenticated
+  USING (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
+  );
+
+-- Only owners/admins can create/update/delete keys
+CREATE POLICY "owners manage device keys" ON device_api_keys
+  FOR ALL TO authenticated
+  USING (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin')
+    )
+  )
+  WITH CHECK (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin')
+    )
+  );
+
 
 -- ----------------------------------------------------------------------------
 -- Storage: private bucket `copilot.sh` with org/session-scoped paths
