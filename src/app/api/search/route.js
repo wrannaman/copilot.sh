@@ -44,10 +44,20 @@ export async function POST(req) {
       throw new Error('Failed to create embedding for query');
     }
 
-    const sessionIds = sessions.map(s => s.id);
+    // Start with all sessions, then apply filters before building the id list
+    let filteredSessions = sessions;
+
+    // Apply session type filter: 'meetings' => has calendar_event_id, 'recordings' => no calendar_event_id
+    if (filters.sessionType && filters.sessionType !== 'all') {
+      if (filters.sessionType === 'meetings') {
+        filteredSessions = filteredSessions.filter(s => !!s.calendar_event_id);
+      } else if (filters.sessionType === 'recordings') {
+        filteredSessions = filteredSessions.filter(s => !s.calendar_event_id);
+      }
+    }
 
     // Apply date filters if specified
-    let filteredSessionIds = sessionIds;
+    let filteredSessionIds = filteredSessions.map(s => s.id);
     if (filters.dateRange && filters.dateRange !== 'all') {
       const now = new Date();
       let cutoffDate;
@@ -67,7 +77,7 @@ export async function POST(req) {
       }
 
       if (cutoffDate) {
-        filteredSessionIds = sessions
+        filteredSessionIds = filteredSessions
           .filter(s => new Date(s.created_at) >= cutoffDate)
           .map(s => s.id);
       }
@@ -94,10 +104,70 @@ export async function POST(req) {
     }
 
     if (!chunks || chunks.length === 0) {
-      return NextResponse.json({
-        results: [],
-        message: 'No matching content found'
-      });
+      // Fallback: keyword full-text search on chunks within the same session scope
+      try {
+        const { data: keywordChunks, error: keywordError } = await supabase
+          .from('session_chunks')
+          .select('id, session_id, content, start_time_seconds, end_time_seconds, speaker_tag, created_at')
+          .in('session_id', filteredSessionIds)
+          .textSearch('ts', query, { type: 'websearch', config: 'english' })
+          .limit(limit)
+          .order('created_at', { ascending: false });
+
+        if (keywordError) {
+          console.warn('⚠️ Keyword fallback failed:', keywordError);
+        }
+
+        if (!keywordChunks || keywordChunks.length === 0) {
+          return NextResponse.json({
+            results: [],
+            message: 'No matching content found'
+          });
+        }
+
+        const keywordEnriched = keywordChunks.map(chunk => {
+          const session = sessions.find(s => s.id === chunk.session_id);
+          return {
+            ...chunk,
+            session_title: session?.title,
+            session_created_at: session?.created_at,
+            session_started_at: session?.started_at,
+            session_duration_seconds: session?.duration_seconds,
+            created_at: session?.created_at || chunk.created_at,
+            similarity: 0.75 // heuristic similarity for keyword matches
+          };
+        });
+
+        // Return early with keyword-based results
+        const sessionGroups = {};
+        keywordEnriched.forEach(result => {
+          if (!sessionGroups[result.session_id]) sessionGroups[result.session_id] = [];
+          sessionGroups[result.session_id].push(result);
+        });
+
+        console.log('✅ SEARCH RESULTS (fallback) →', {
+          totalChunks: keywordEnriched.length,
+          sessionsMatched: Object.keys(sessionGroups).length
+        });
+
+        return NextResponse.json({
+          results: keywordEnriched,
+          metadata: {
+            totalResults: keywordEnriched.length,
+            sessionsSearched: filteredSessionIds.length,
+            sessionsMatched: Object.keys(sessionGroups).length,
+            query,
+            filters,
+            searchType: 'keyword_fallback'
+          }
+        });
+      } catch (fallbackErr) {
+        console.warn('⚠️ Keyword fallback threw:', fallbackErr);
+        return NextResponse.json({
+          results: [],
+          message: 'No matching content found'
+        });
+      }
     }
 
     // Enrich results with session metadata

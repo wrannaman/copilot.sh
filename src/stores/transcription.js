@@ -6,6 +6,7 @@ export const useTranscriptionStore = create((set, get) => ({
   textArray: [],
   currentPartial: '',
   recentTranscripts: [],
+  isSending: false,
 
   // Timers
   sendTimer: null,
@@ -85,13 +86,15 @@ export const useTranscriptionStore = create((set, get) => ({
     set({
       isRecording: false,
       sendTimer: null,
-      recognition: null
+      recognition: null,
+      textArray: [],
+      currentPartial: ''
     })
   },
 
-  sendText: async () => {
+  sendText: async (overrideText = null) => {
     const store = get()
-    const textToSend = store.textArray.join(' ').trim()
+    const textToSend = (overrideText != null ? String(overrideText) : store.textArray.join(' ')).trim()
 
     if (!textToSend) {
       console.log('[SEND] no text')
@@ -100,10 +103,11 @@ export const useTranscriptionStore = create((set, get) => ({
 
     console.log('[SEND] sending:', textToSend)
 
-    // Clear array immediately
-    set({ textArray: [] })
+    // Clear preview immediately
+    set({ textArray: [], currentPartial: '' })
 
     try {
+      set({ isSending: true })
       const form = new FormData()
       form.append('text', textToSend)
       form.append('mode', 'browser')
@@ -111,19 +115,24 @@ export const useTranscriptionStore = create((set, get) => ({
       const res = await fetch('/api/transcribe', { method: 'POST', body: form })
       const data = await res.json()
 
-      if (data.text?.trim()) {
+      const finalized = (data && typeof data.text === 'string' && data.text.trim()) ? data.text.trim() : textToSend
+      if (finalized) {
         const transcript = {
           seq: Date.now(),
-          text: data.text.trim(),
+          text: finalized,
           timestamp: new Date().toLocaleTimeString()
         }
 
         set(state => ({
           recentTranscripts: [transcript, ...state.recentTranscripts.slice(0, 9)]
         }))
+        // Clear any in-progress partial so the preview disappears
+        set({ currentPartial: '' })
       }
     } catch (e) {
       console.error('[SEND] failed:', e)
+    } finally {
+      set({ isSending: false })
     }
   }
 }))

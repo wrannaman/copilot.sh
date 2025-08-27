@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Mic, Square } from "lucide-react";
+import { Mic, Square, Loader2 } from "lucide-react";
 import { useTranscriptionStore } from "@/stores/transcription";
 
 export default function RecordPage() {
@@ -26,11 +26,13 @@ export default function RecordPage() {
 function RecordContent() {
   const {
     isRecording,
+    isSending,
     textArray,
     currentPartial,
     recentTranscripts,
     startRecording,
-    stopRecording
+    stopRecording,
+    sendText
   } = useTranscriptionStore();
 
   const [devices, setDevices] = useState([]);
@@ -68,13 +70,47 @@ function RecordContent() {
         <CardTitle>Recorder</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Current paragraph being built */}
-        {preview && (
-          <div className="rounded-md border p-2 text-sm">
-            <span className="text-muted-foreground">Building paragraph:</span> {preview}
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            {isRecording ? (
+              <span className="inline-flex items-center gap-2 text-green-600">
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+                Recording • Sends every 10s
+              </span>
+            ) : isSending ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Saving…
+              </span>
+            ) : (
+              <span className="text-muted-foreground">Idle</span>
+            )}
           </div>
-        )}
-
+          <div className="flex items-center gap-2">
+            {!isRecording ? (
+              <Button onClick={startRecording} size="icon" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
+                <Mic className="h-7 w-7 sm:h-8 sm:w-8" />
+              </Button>
+            ) : (
+              <Button onClick={async () => {
+                // Stop timers/recognition first to avoid double-sends from the interval
+                stopRecording();
+                const finalText = [
+                  ...textArray,
+                  (currentPartial && currentPartial.trim()) ? currentPartial.trim() : null
+                ].filter(Boolean).join(' ').trim();
+                if (!finalText) return;
+                try {
+                  await sendText(finalText);
+                } catch (e) {
+                  console.error('[STOP SEND] failed:', e);
+                }
+              }} size="icon" variant="destructive" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
+                <Square className="h-7 w-7 sm:h-8 sm:w-8" />
+              </Button>
+            )}
+          </div>
+        </div>
         {/* Microphone selector */}
         <div className="flex items-center gap-3">
           <Label className="text-sm text-muted-foreground">Microphone</Label>
@@ -92,30 +128,16 @@ function RecordContent() {
             </SelectContent>
           </Select>
         </div>
-
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            {isRecording ? (
-              <span className="inline-flex items-center gap-2 text-green-600">
-                <span className="h-2 w-2 rounded-full bg-green-500" />
-                Recording • Sends every 10s
-              </span>
-            ) : (
-              <span className="text-muted-foreground">Idle</span>
+        {preview && (
+          <div className="rounded-md border p-2 text-sm flex items-center justify-between">
+            <div>
+              <span className="text-muted-foreground"></span> {preview}
+            </div>
+            {isSending && (
+              <span className="ml-3 text-xs text-muted-foreground">Saving…</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {!isRecording ? (
-              <Button onClick={startRecording} size="icon" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
-                <Mic className="h-7 w-7 sm:h-8 sm:w-8" />
-              </Button>
-            ) : (
-              <Button onClick={stopRecording} size="icon" variant="destructive" className="h-16 w-16 rounded-full sm:h-20 sm:w-20">
-                <Square className="h-7 w-7 sm:h-8 sm:w-8" />
-              </Button>
-            )}
-          </div>
-        </div>
+        )}
 
         {/* Recent Transcripts */}
         {recentTranscripts.length > 0 && (

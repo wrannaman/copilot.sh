@@ -252,17 +252,57 @@ export function SearchComponent() {
                 <Filter className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Quick filters:</span>
               </div>
-              {["today", "this week", "meetings", "recordings"].map((filter) => (
+              {[[
+                { key: "today", apply: (q) => ({ dateRange: "today" }) },
+                { key: "this week", apply: (q) => ({ dateRange: "week" }) },
+                { key: "meetings", apply: (q) => ({ sessionType: "meetings" }) },
+                { key: "recordings", apply: (q) => ({ sessionType: "recordings" }) }
+              ]].flat().map((filter) => (
                 <Badge
-                  key={filter}
+                  key={filter.key}
                   variant="outline"
                   className="cursor-pointer hover:bg-muted"
                   onClick={() => {
-                    // Quick filter implementation would go here
-                    setQuery(filter === "meetings" ? "meeting" : filter === "recordings" ? "recording" : `${filter}`);
+                    if (!currentOrganization?.org_id) return;
+                    const nextFilters = {
+                      ...selectedFilters,
+                      ...filter.apply(query)
+                    };
+                    setSelectedFilters(nextFilters);
+                    if (query.trim()) {
+                      // Fire search immediately with the new filters
+                      (async () => {
+                        try {
+                          setLoading(true);
+                          setHasSearched(true);
+                          const response = await fetch("/api/search", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              query: query.trim(),
+                              organizationId: currentOrganization.org_id,
+                              filters: nextFilters,
+                              limit: 20
+                            })
+                          });
+                          if (!response.ok) throw new Error("Search failed");
+                          const data = await response.json();
+                          setResults(data.results || []);
+                        } catch (err) {
+                          console.error("Quick filter search error:", err);
+                          toast.error("Search failed", { description: "Unable to search your sessions." });
+                          setResults([]);
+                        } finally {
+                          setLoading(false);
+                        }
+                      })();
+                    } else {
+                      // If no query yet, just set the filter; user can type then submit
+                      searchInputRef.current?.focus();
+                    }
                   }}
                 >
-                  {filter}
+                  {filter.key}
                 </Badge>
               ))}
             </div>
