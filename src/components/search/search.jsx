@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,8 @@ export function SearchComponent() {
     dateRange: "all", // all, today, week, month
     sessionType: "all" // all, meetings, recordings
   });
+  const [meetingEvents, setMeetingEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   const searchInputRef = useRef(null);
 
@@ -106,10 +109,10 @@ export function SearchComponent() {
 
   const highlightQuery = (text, query) => {
     if (!query.trim()) return text;
-    
+
     const regex = new RegExp(`(${query.trim()})`, 'gi');
     const parts = text.split(regex);
-    
+
     return parts.map((part, index) =>
       regex.test(part) ? (
         <mark key={index} className="bg-yellow-200 dark:bg-yellow-800 rounded px-1">
@@ -119,6 +122,87 @@ export function SearchComponent() {
         part
       )
     );
+  };
+
+  // Compute absolute wall-clock time for a result (ms since epoch)
+  const getResultTimestampMs = (result) => {
+    try {
+      const sessionStartIso = result.session_created_at || result.created_at;
+      if (!sessionStartIso) return null;
+      const baseMs = new Date(sessionStartIso).getTime();
+      const offsetMs = (result.start_time_seconds || 0) * 1000;
+      if (Number.isNaN(baseMs)) return null;
+      return baseMs + offsetMs;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  // Fetch calendar events overlapping the time span of current results
+  useEffect(() => {
+    const fetchOverlappingEvents = async () => {
+      if (!currentOrganization?.org_id || !results || results.length === 0) {
+        setMeetingEvents([]);
+        return;
+      }
+
+      // Determine min/max timestamps covered by the results
+      const timestamps = results
+        .map(getResultTimestampMs)
+        .filter((v) => typeof v === "number" && !Number.isNaN(v));
+
+      if (timestamps.length === 0) {
+        setMeetingEvents([]);
+        return;
+      }
+
+      const minTs = Math.min(...timestamps);
+      const maxTs = Math.max(...timestamps);
+
+      try {
+        setEventsLoading(true);
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("calendar_events")
+          .select("id,title,starts_at,ends_at")
+          .eq("organization_id", currentOrganization.org_id)
+          .lte("starts_at", new Date(maxTs).toISOString())
+          .gte("ends_at", new Date(minTs).toISOString())
+          .order("starts_at", { ascending: true });
+
+        if (error) {
+          console.error("Calendar events fetch error:", error);
+          setMeetingEvents([]);
+          return;
+        }
+
+        setMeetingEvents(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Calendar events fetch exception:", err);
+        setMeetingEvents([]);
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+
+    fetchOverlappingEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, currentOrganization?.org_id]);
+
+  const findEventForTimestamp = (tsMs) => {
+    if (!Array.isArray(meetingEvents) || meetingEvents.length === 0) return null;
+    for (const ev of meetingEvents) {
+      const startMs = ev.starts_at ? new Date(ev.starts_at).getTime() : null;
+      const endMs = ev.ends_at ? new Date(ev.ends_at).getTime() : null;
+      if (startMs == null) continue;
+      // If no end provided, treat as point-in-time or all-day start; a ts after start qualifies
+      if (endMs == null) {
+        if (tsMs >= startMs) return ev;
+      } else if (tsMs >= startMs && tsMs <= endMs) {
+        return ev;
+      }
+    }
+    return null;
   };
 
   return (
@@ -246,8 +330,15 @@ export function SearchComponent() {
                       <span className="text-xs text-muted-foreground">
                         {formatTimeAgo(result.created_at)}
                       </span>
-                      <Button variant="ghost" size="sm">
-                        <ExternalLink className="h-4 w-4" />
+                      <Button asChild variant="ghost" size="sm">
+                        <Link
+                          href={`/sessions/${result.session_id}${result.start_time_seconds ? `?t=${Math.floor(result.start_time_seconds)}` : ""}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Open session details"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </Link>
                       </Button>
                     </div>
                   </div>
@@ -286,6 +377,27 @@ export function SearchComponent() {
                         <Badge variant="outline" className="text-xs">
                           Similarity: {Math.round((result.similarity || 0) * 100)}%
                         </Badge>
+                        {(() => {
+                          // Prefer API-provided calendar_event; fallback to client-side lookup
+                          const apiEvent = result.calendar_event;
+                          if (apiEvent) {
+                            return (
+                              <Badge variant="outline" className="text-xs flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                <span>During: {apiEvent.title || 'Meeting'}</span>
+                              </Badge>
+                            );
+                          }
+                          const tsMs = getResultTimestampMs(result);
+                          const ev = tsMs ? findEventForTimestamp(tsMs) : null;
+                          if (!ev) return null;
+                          return (
+                            <Badge variant="outline" className="text-xs flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              <span>During: {ev.title || 'Meeting'}</span>
+                            </Badge>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>

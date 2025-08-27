@@ -22,7 +22,7 @@ export async function embedTexts(rawTexts = []) {
       providerOptions: {
         google: {
           taskType: 'RETRIEVAL_QUERY',
-          // outputDimensionality: 768, // optional
+          outputDimensionality: 768,
         },
       },
     })

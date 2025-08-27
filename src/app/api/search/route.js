@@ -5,7 +5,7 @@ import { embedTexts } from '@/server/ai/embedding';
 export async function POST(req) {
   try {
     const { query, organizationId, filters = {}, limit = 20 } = await req.json();
-    
+
     console.log('🔍 SEARCH REQUEST →', { query, organizationId, filters, limit });
 
     if (!query || typeof query !== 'string') {
@@ -21,7 +21,7 @@ export async function POST(req) {
     // First, get all sessions for this organization to use as session filter
     const { data: sessions, error: sessionsError } = await supabase
       .from('sessions')
-      .select('id, title, duration_seconds, created_at')
+      .select('id, title, duration_seconds, created_at, started_at, calendar_event_id')
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
 
@@ -39,19 +39,19 @@ export async function POST(req) {
 
     // Create embeddings for the search query
     const [queryEmbedding] = await embedTexts([query]);
-    
+
     if (!queryEmbedding || !Array.isArray(queryEmbedding)) {
       throw new Error('Failed to create embedding for query');
     }
 
     const sessionIds = sessions.map(s => s.id);
-    
+
     // Apply date filters if specified
     let filteredSessionIds = sessionIds;
     if (filters.dateRange && filters.dateRange !== 'all') {
       const now = new Date();
       let cutoffDate;
-      
+
       switch (filters.dateRange) {
         case 'today':
           cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -65,7 +65,7 @@ export async function POST(req) {
         default:
           cutoffDate = null;
       }
-      
+
       if (cutoffDate) {
         filteredSessionIds = sessions
           .filter(s => new Date(s.created_at) >= cutoffDate)
@@ -107,10 +107,59 @@ export async function POST(req) {
         ...chunk,
         session_title: session?.title,
         session_created_at: session?.created_at,
+        session_started_at: session?.started_at,
         session_duration_seconds: session?.duration_seconds,
         created_at: session?.created_at || chunk.created_at
       };
     });
+
+    // Attach calendar event attribution if possible by computing absolute timestamps
+    try {
+      const timestamps = enrichedResults
+        .map((r) => {
+          const baseIso = r.session_started_at || r.session_created_at || r.created_at;
+          if (!baseIso) return null;
+          const baseMs = new Date(baseIso).getTime();
+          const offsetMs = (r.start_time_seconds || 0) * 1000;
+          if (Number.isNaN(baseMs)) return null;
+          return baseMs + offsetMs;
+        })
+        .filter((v) => typeof v === 'number' && !Number.isNaN(v));
+
+      if (timestamps.length > 0) {
+        const minTs = Math.min(...timestamps);
+        const maxTs = Math.max(...timestamps);
+
+        const { data: events, error: eventsError } = await supabase
+          .from('calendar_events')
+          .select('id,title,starts_at,ends_at')
+          .eq('organization_id', organizationId)
+          .lte('starts_at', new Date(maxTs).toISOString())
+          .gte('ends_at', new Date(minTs).toISOString())
+          .order('starts_at', { ascending: true });
+
+        if (!eventsError && Array.isArray(events) && events.length) {
+          for (const r of enrichedResults) {
+            const baseIso = r.session_started_at || r.session_created_at || r.created_at;
+            const baseMs = baseIso ? new Date(baseIso).getTime() : NaN;
+            if (Number.isNaN(baseMs)) continue;
+            const tsMs = baseMs + (r.start_time_seconds || 0) * 1000;
+            const match = events.find((ev) => {
+              const s = ev.starts_at ? new Date(ev.starts_at).getTime() : null;
+              const e = ev.ends_at ? new Date(ev.ends_at).getTime() : null;
+              if (s == null) return false;
+              if (e == null) return tsMs >= s; // open-ended
+              return tsMs >= s && tsMs <= e;
+            });
+            if (match) {
+              r.calendar_event = match;
+            }
+          }
+        }
+      }
+    } catch (attribErr) {
+      console.warn('⚠️ Calendar attribution failed:', attribErr);
+    }
 
     // Group results by session and include basic text search as fallback
     const sessionGroups = {};
@@ -140,11 +189,11 @@ export async function POST(req) {
   } catch (error) {
     console.error('❌ Search API error:', error);
     return NextResponse.json(
-      { 
-        error: 'Search failed', 
+      {
+        error: 'Search failed',
         details: error.message,
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      }, 
+      },
       { status: 500 }
     );
   }
@@ -156,14 +205,14 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const query = searchParams.get('q');
     const organizationId = searchParams.get('org');
-    
+
     if (!query || !organizationId) {
       return NextResponse.json({ error: 'Query and organization ID are required' }, { status: 400 });
     }
 
     // Simple text search using PostgreSQL full-text search on session_chunks.ts column
     const supabase = await createServiceClient();
-    
+
     const { data: chunks, error } = await supabase
       .from('session_chunks')
       .select(`
@@ -222,10 +271,10 @@ export async function GET(req) {
   } catch (error) {
     console.error('❌ Text search error:', error);
     return NextResponse.json(
-      { 
-        error: 'Search failed', 
-        details: error.message 
-      }, 
+      {
+        error: 'Search failed',
+        details: error.message
+      },
       { status: 500 }
     );
   }

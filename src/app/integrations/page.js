@@ -6,6 +6,7 @@ import { AuthenticatedNav } from "@/components/layout/authenticated-nav";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import GoogleCalendarCard from "@/components/integrations/GoogleCalendarCard";
+import DeviceKeysCard from "@/components/integrations/DeviceKeysCard";
 import { LinkIcon } from "lucide-react";
 
 function IntegrationsContent() {
@@ -35,6 +36,7 @@ function IntegrationsContent() {
           <div className="space-y-4">
             <h2 className="text-lg font-medium">Available Integrations</h2>
             <GoogleCalendarCard />
+            <DeviceKeysCard />
           </div>
 
 

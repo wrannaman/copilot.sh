@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   duration_seconds INTEGER,
   audio_path TEXT,             -- storage path (private)
   audio_mime TEXT,             -- e.g., audio/webm
+  transcript_storage_path TEXT, -- path to transcript file in storage
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session
@@ -96,18 +97,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(organization_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_creator ON sessions(created_by);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-
--- Raw transcript (single text blob per session; keep it simple for v0)
-CREATE TABLE IF NOT EXISTS session_transcripts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  text TEXT,                   -- full transcript (denormalized)
-  segments_json JSONB NOT NULL DEFAULT '[]', -- array of { ts: ISO8601, text }
-  words_json JSONB,            -- optional per-word timing
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_session_transcript ON session_transcripts(session_id);
 
 -- Chunked transcript with embeddings for search (per session)
 CREATE TABLE IF NOT EXISTS session_chunks (
@@ -127,6 +116,25 @@ CREATE INDEX IF NOT EXISTS idx_session_chunks_created ON session_chunks(created_
 CREATE INDEX IF NOT EXISTS idx_session_chunks_ts ON session_chunks USING GIN (ts);
 -- Cosine distance index for pgvector (tune lists as needed)
 CREATE INDEX IF NOT EXISTS idx_session_chunks_embedding ON session_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- ----------------------------------------------------------------------------
+-- Device API Keys (for headless devices like Raspberry Pi)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS device_api_keys (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  key TEXT UNIQUE NOT NULL,
+  label TEXT,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL REFERENCES org(id) ON DELETE CASCADE,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_api_keys_user ON device_api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_device_api_keys_org ON device_api_keys(organization_id);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE device_api_keys TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- Grants for server (service_role) to manage orgs and memberships
