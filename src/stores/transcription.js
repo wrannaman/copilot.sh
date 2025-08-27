@@ -10,6 +10,14 @@ export const useTranscriptionStore = create((set, get) => ({
   isSending: false,
   errorMessage: '',
   errorCode: null,
+  _recordingStartedAt: 0,
+  _lastHeardAt: 0,
+  _silenceWarned: false,
+  _restartPending: false,
+  _lastRestartAt: 0,
+  _restartFailures: 0,
+  _restartWindowStart: 0,
+  _restartTimer: null,
 
   // Timers
   sendTimer: null,
@@ -23,7 +31,7 @@ export const useTranscriptionStore = create((set, get) => ({
     const store = get()
     if (store.isRecording) return
 
-    set({ isRecording: true, textArray: [], currentPartial: '', recentTranscripts: [], errorMessage: '', errorCode: null })
+    set({ isRecording: true, textArray: [], currentPartial: '', recentTranscripts: [], errorMessage: '', errorCode: null, _recordingStartedAt: Date.now(), _lastHeardAt: 0, _silenceWarned: false, _restartPending: false, _lastRestartAt: 0, _restartFailures: 0, _restartWindowStart: Date.now(), _restartTimer: null })
 
     // Start STT
     const SR = window.webkitSpeechRecognition || window.SpeechRecognition
@@ -40,6 +48,12 @@ export const useTranscriptionStore = create((set, get) => ({
     recog.interimResults = true
     recog.maxAlternatives = 1
 
+    recog.onstart = () => {
+      const now = Date.now()
+      set({ _lastRestartAt: now, _restartPending: false })
+      console.log('[STT] onstart')
+    }
+
     recog.onresult = (ev) => {
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const res = ev.results[i]
@@ -51,12 +65,13 @@ export const useTranscriptionStore = create((set, get) => ({
               textArray: [...state.textArray, text],
               currentPartial: '',
               errorMessage: '',
-              errorCode: null
+              errorCode: null,
+              _lastHeardAt: Date.now()
             }))
           }
         } else {
           const partial = res[0]?.transcript?.trim() || ""
-          set({ currentPartial: partial })
+          set({ currentPartial: partial, _lastHeardAt: partial ? Date.now() : get()._lastHeardAt })
         }
       }
     }
@@ -91,16 +106,62 @@ export const useTranscriptionStore = create((set, get) => ({
     }
 
     recog.onend = () => {
-      console.log('[STT] onend')
       const current = get()
-      if (current.isRecording) {
-        // Attempt auto-restart to avoid drops
+      console.log('[STT] onend')
+      if (!current.isRecording) return
+
+      // Debounce rapid-fire onend
+      if (current._restartPending || current._restartTimer) return
+
+      const now = Date.now()
+      // Sliding window for failures
+      let windowStart = current._restartWindowStart || now
+      let failures = current._restartFailures || 0
+      if (now - windowStart > 30000) {
+        windowStart = now
+        failures = 0
+      }
+
+      const sinceLast = now - (current._lastRestartAt || 0)
+      const sinceHeard = now - (current._lastHeardAt || current._recordingStartedAt || now)
+      const minGapMs = 3000
+      const doImmediate = sinceLast >= minGapMs
+
+      const tryRestart = () => {
         try {
+          set({ _restartPending: true })
           recog.start()
+          set({ _restartPending: false, _lastRestartAt: Date.now(), _restartFailures: failures, _restartWindowStart: windowStart, _restartTimer: null })
         } catch (err) {
           console.warn('[STT] auto-restart failed', err)
-          set({ errorMessage: 'Speech recognition stopped. Tap record to resume.', errorCode: 'ended' })
+          failures += 1
+          set({ _restartPending: false, _restartFailures: failures, _restartWindowStart: windowStart, _lastRestartAt: Date.now(), _restartTimer: null })
+          if (failures >= 8) {
+            const msg = 'Speech recognition keeps stopping. Check mic and reload the page.'
+            set({ errorMessage: msg, errorCode: 'ended-loop' })
+            toast.warning(msg)
+            return
+          }
+          // Backoff retry
+          const dynamicBase = sinceHeard < 4000 ? minGapMs : 2000
+          const backoffMs = Math.min(6000, dynamicBase + failures * 500)
+          const t = setTimeout(() => {
+            set({ _restartTimer: null })
+            tryRestart()
+          }, backoffMs)
+          set({ _restartTimer: t })
         }
+      }
+
+      if (doImmediate) {
+        tryRestart()
+      } else {
+        const delay = Math.max(1000, minGapMs - sinceLast)
+        const t = setTimeout(() => {
+          set({ _restartTimer: null })
+          tryRestart()
+        }, delay)
+        set({ _restartTimer: t, _restartPending: true })
       }
     }
 
@@ -114,11 +175,24 @@ export const useTranscriptionStore = create((set, get) => ({
       toast.error(msg)
     }
 
-    // Start send timer
+    // Start send + silence check timer
     const timer = setInterval(() => {
       const current = get()
-      if (!current.isRecording || current.isSending) return
-      current.sendText()
+      if (!current.isRecording) return
+
+      // 1) Silence/no-text warning after 5s of no partials or finals
+      const now = Date.now()
+      const lastHeard = current._lastHeardAt || current._recordingStartedAt
+      const elapsedMs = now - lastHeard
+      if (elapsedMs >= 5000 && !current._silenceWarned) {
+        toast.info('No speech detected for 5s. Is your mic muted or too quiet?')
+        set({ _silenceWarned: true })
+      }
+
+      // 2) Periodic send
+      if (!current.isSending) {
+        current.sendText()
+      }
     }, 5000)
 
     set({ sendTimer: timer })
@@ -131,6 +205,10 @@ export const useTranscriptionStore = create((set, get) => ({
       clearInterval(store.sendTimer)
     }
 
+    if (store._restartTimer) {
+      try { clearTimeout(store._restartTimer) } catch { }
+    }
+
     if (store.recognition) {
       try { store.recognition.stop() } catch { }
     }
@@ -140,7 +218,15 @@ export const useTranscriptionStore = create((set, get) => ({
       sendTimer: null,
       recognition: null,
       textArray: [],
-      currentPartial: ''
+      currentPartial: '',
+      _recordingStartedAt: 0,
+      _lastHeardAt: 0,
+      _silenceWarned: false,
+      _restartPending: false,
+      _lastRestartAt: 0,
+      _restartFailures: 0,
+      _restartWindowStart: 0,
+      _restartTimer: null
     })
   },
 
