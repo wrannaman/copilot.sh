@@ -35,7 +35,13 @@ function RecordContent() {
     clearError,
     startRecording,
     stopAndFlush,
-    sendText
+    sendText,
+    recognitionMode,
+    setRecognitionMode,
+    nextSendAt,
+    audioLevel,
+    setPreferredDeviceId,
+    preferredDeviceId
   } = useTranscriptionStore();
 
   const [devices, setDevices] = useState([]);
@@ -56,7 +62,10 @@ function RecordContent() {
 
         // Auto-select CMTECK
         const cmteck = mics.find(d => d.label.toLowerCase().includes('cmteck'));
-        if (cmteck) setSelectedDeviceId(cmteck.deviceId);
+        if (cmteck) {
+          setSelectedDeviceId(cmteck.deviceId);
+          setPreferredDeviceId(cmteck.deviceId);
+        }
       } catch (e) {
         console.warn('Device enumeration failed', e);
       }
@@ -78,7 +87,7 @@ function RecordContent() {
             {isRecording ? (
               <span className="inline-flex items-center gap-2 text-green-600">
                 <span className="h-2 w-2 rounded-full bg-green-500" />
-                Recording • Sends every 5s
+                Recording
               </span>
             ) : isSending ? (
               <span className="inline-flex items-center gap-2">
@@ -122,7 +131,7 @@ function RecordContent() {
         {/* Microphone selector */}
         <div className="flex items-center gap-3">
           <Label className="text-sm text-muted-foreground">Microphone</Label>
-          <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+          <Select value={selectedDeviceId} onValueChange={(v) => { setSelectedDeviceId(v); setPreferredDeviceId(v === 'default' ? null : v); }}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select microphone" />
             </SelectTrigger>
@@ -136,6 +145,34 @@ function RecordContent() {
             </SelectContent>
           </Select>
         </div>
+        {/* Recognition mode selector */}
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-muted-foreground">Recognition</Label>
+          <Select value={recognitionMode} onValueChange={setRecognitionMode}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Choose mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">Local (lower accuracy)</SelectItem>
+              <SelectItem value="remote">Remote (higher accuracy)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Minimal status: countdown + audio level */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <div>
+            {isRecording && nextSendAt ? `Next send in ${Math.max(0, Math.ceil((nextSendAt - Date.now()) / 1000))}s` : ''}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-24 bg-muted rounded overflow-hidden">
+              <div
+                className="h-2 bg-green-500 transition-all"
+                style={{ width: `${Math.round(Math.min(100, Math.max(0, audioLevel * 100)))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
         {preview && (
           <div className="rounded-md border p-2 text-sm flex items-center justify-between">
             <div>

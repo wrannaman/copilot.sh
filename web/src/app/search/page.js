@@ -138,12 +138,23 @@ function SearchResults() {
     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
   };
 
+  const formatAbsolute = (isoString) => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleString();
+    } catch (_) {
+      return '';
+    }
+  };
+
   const highlightQuery = (text, query) => {
     if (!query.trim()) return text;
-    
+
     const regex = new RegExp(`(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
     const parts = text.split(regex);
-    
+
     return parts.map((part, index) =>
       regex.test(part) ? (
         <mark key={index} className="bg-yellow-200 dark:bg-yellow-800 rounded px-1 font-medium">
@@ -254,7 +265,7 @@ function SearchResults() {
                     <Filter className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm text-muted-foreground">Filters:</span>
                   </div>
-                  
+
                   <select
                     value={filters.dateRange}
                     onChange={(e) => setFilters(prev => ({ ...prev, dateRange: e.target.value }))}
@@ -358,15 +369,14 @@ function SearchResults() {
                         <Button variant="ghost" size="sm">
                           <ExternalLink className="h-4 w-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="sm"
                           onClick={() => toggleExpanded(session.id)}
                         >
-                          <ChevronDown 
-                            className={`h-4 w-4 transition-transform ${
-                              expandedResults.has(session.id) ? 'rotate-180' : ''
-                            }`} 
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform ${expandedResults.has(session.id) ? 'rotate-180' : ''
+                              }`}
                           />
                         </Button>
                       </div>
@@ -377,47 +387,53 @@ function SearchResults() {
                     {chunks
                       .slice(0, expandedResults.has(session.id) ? undefined : 3)
                       .map((chunk, index) => (
-                      <div 
-                        key={`${chunk.id}-${index}`} 
-                        className="p-6 border-b last:border-b-0 hover:bg-muted/10 transition-colors"
-                      >
-                        <div className="space-y-3">
-                          {/* Chunk metadata */}
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <div className="flex items-center gap-4">
-                              {chunk.speaker_tag && (
-                                <div className="flex items-center gap-1">
-                                  <User className="h-3 w-3" />
-                                  <span>Speaker {chunk.speaker_tag}</span>
-                                </div>
-                              )}
-                              {chunk.start_time_seconds && (
-                                <div className="flex items-center gap-1">
-                                  <Play className="h-3 w-3" />
-                                  <span>{formatDuration(chunk.start_time_seconds)}</span>
-                                </div>
-                              )}
+                        <div
+                          key={`${chunk.id}-${index}`}
+                          className="p-6 border-b last:border-b-0 hover:bg-muted/10 transition-colors"
+                        >
+                          <div className="space-y-3">
+                            {/* Chunk metadata */}
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <div className="flex items-center gap-4">
+                                {chunk.speaker_tag && (
+                                  <div className="flex items-center gap-1">
+                                    <User className="h-3 w-3" />
+                                    <span>Speaker {chunk.speaker_tag}</span>
+                                  </div>
+                                )}
+                                {chunk.start_time_seconds && (
+                                  <div className="flex items-center gap-1">
+                                    <Play className="h-3 w-3" />
+                                    <span>{formatDuration(chunk.start_time_seconds)}</span>
+                                  </div>
+                                )}
+                                {chunk.absolute_timestamp && (
+                                  <div className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    <span>{formatAbsolute(chunk.absolute_timestamp)}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <Badge variant="outline" className="text-xs">
+                                {Math.round((chunk.similarity || 0) * 100)}% match
+                              </Badge>
                             </div>
-                            <Badge variant="outline" className="text-xs">
-                              {Math.round((chunk.similarity || 0) * 100)}% match
-                            </Badge>
-                          </div>
 
-                          {/* Content */}
-                          <div className="prose prose-sm max-w-none">
-                            <p className="text-sm leading-relaxed">
-                              {highlightQuery(chunk.content, query)}
-                            </p>
+                            {/* Content */}
+                            <div className="prose prose-sm max-w-none">
+                              <p className="text-sm leading-relaxed">
+                                {highlightQuery(chunk.content, query)}
+                              </p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
 
                     {/* Show more button */}
                     {chunks.length > 3 && !expandedResults.has(session.id) && (
                       <div className="p-4 text-center border-t">
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="sm"
                           onClick={() => toggleExpanded(session.id)}
                         >

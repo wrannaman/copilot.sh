@@ -165,6 +165,19 @@ export async function POST(req) {
     fused.sort((a, b) => (b.rrf_score || 0) - (a.rrf_score || 0));
     const enrichedResults = fused.slice(0, limit);
 
+    // Compute absolute timestamp (ISO) for each chunk when possible
+    for (const r of enrichedResults) {
+      try {
+        const baseIso = r.session_started_at || r.session_created_at || r.created_at;
+        const baseMs = baseIso ? new Date(baseIso).getTime() : NaN;
+        const offsetMs = (r.start_time_seconds || 0) * 1000;
+        if (!Number.isNaN(baseMs)) {
+          const tsMs = baseMs + offsetMs;
+          r.absolute_timestamp = new Date(tsMs).toISOString();
+        }
+      } catch (_) { }
+    }
+
     // Attach calendar event attribution if possible by computing absolute timestamps
     try {
       const timestamps = enrichedResults
@@ -199,6 +212,10 @@ export async function POST(req) {
             const baseMs = baseIso ? new Date(baseIso).getTime() : NaN;
             if (Number.isNaN(baseMs)) continue;
             const tsMs = baseMs + (r.start_time_seconds || 0) * 1000;
+            // Ensure absolute timestamp is present
+            if (!r.absolute_timestamp) {
+              try { r.absolute_timestamp = new Date(tsMs).toISOString(); } catch (_) { }
+            }
             const overlapping = events.filter((ev) => {
               const s = ev.starts_at ? new Date(ev.starts_at).getTime() : null;
               const e = ev.ends_at ? new Date(ev.ends_at).getTime() : null;

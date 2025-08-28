@@ -10,6 +10,21 @@ export const useTranscriptionStore = create((set, get) => ({
   isSending: false,
   errorMessage: '',
   errorCode: null,
+  recognitionMode: 'local', // 'local' (browser) or 'remote' 
+  mediaStream: null,
+  mediaRecorder: null,
+  chunkIntervalMs: 10000,
+  nextSendAt: 0,
+  audioLevel: 0,
+  audioLevelTimer: null,
+  audioContext: null,
+  audioAnalyser: null,
+  audioSource: null,
+  audioMonitorTimer: null,
+  remoteInFlight: false,
+  remotePendingBlob: null,
+  preferredDeviceId: null,
+  remoteRotateTimer: null,
   _recordingStartedAt: 0,
   _lastHeardAt: 0,
   _silenceWarned: false,
@@ -26,14 +41,193 @@ export const useTranscriptionStore = create((set, get) => ({
   // Error helpers
   clearError: () => set({ errorMessage: '', errorCode: null }),
 
+  // Mode
+  setRecognitionMode: (mode) => {
+    const m = mode === 'remote' ? 'remote' : 'local'
+    set({ recognitionMode: m })
+  },
+
+  setPreferredDeviceId: (deviceId) => {
+    set({ preferredDeviceId: deviceId || null })
+  },
+
+  // Audio monitor (for remote mode)
+  startAudioMonitor: (stream) => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)()
+      const src = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 2048
+      src.connect(analyser)
+      const buf = new Uint8Array(analyser.fftSize)
+      const monitor = setInterval(() => {
+        try {
+          analyser.getByteTimeDomainData(buf)
+          // Compute peak deviation from 128 (center) as a simple level
+          let peak = 0
+          for (let i = 0; i < buf.length; i++) {
+            const v = Math.abs(buf[i] - 128) / 128
+            if (v > peak) peak = v
+          }
+          const smoothed = Math.min(1, Math.max(0, peak))
+          set({ audioLevel: smoothed })
+        } catch { }
+      }, 100)
+      set({ audioContext: ctx, audioAnalyser: analyser, audioSource: src, audioMonitorTimer: monitor })
+    } catch { }
+  },
+
+  stopAudioMonitor: () => {
+    const s = get()
+    if (s.audioMonitorTimer) {
+      try { clearInterval(s.audioMonitorTimer) } catch { }
+    }
+    if (s.audioContext) {
+      try { s.audioContext.close() } catch { }
+    }
+    set({ audioMonitorTimer: null, audioContext: null, audioAnalyser: null, audioSource: null, audioLevel: 0 })
+  },
+
   // Actions
-  startRecording: () => {
+  startRecording: async () => {
     const store = get()
     if (store.isRecording) return
 
-    set({ isRecording: true, textArray: [], currentPartial: '', recentTranscripts: [], errorMessage: '', errorCode: null, _recordingStartedAt: Date.now(), _lastHeardAt: 0, _silenceWarned: false, _restartPending: false, _lastRestartAt: 0, _restartFailures: 0, _restartWindowStart: Date.now(), _restartTimer: null })
+    set({ isRecording: true, textArray: [], currentPartial: '', recentTranscripts: [], errorMessage: '', errorCode: null, _recordingStartedAt: Date.now(), _lastHeardAt: 0, _silenceWarned: false, _restartPending: false, _lastRestartAt: 0, _restartFailures: 0, _restartWindowStart: Date.now(), _restartTimer: null, nextSendAt: Date.now() + get().chunkIntervalMs, audioLevel: 0 })
 
-    // Start STT
+    // Start a gentle audio level decay so the meter falls between updates
+    if (!get().audioLevelTimer) {
+      const decay = setInterval(() => {
+        set((state) => ({ audioLevel: Math.max(0, state.audioLevel * 0.85 - 0.02) }))
+      }, 100)
+      set({ audioLevelTimer: decay })
+    }
+
+    // Remote mode: record audio chunks and send to API
+    if (get().recognitionMode === 'remote') {
+      try {
+        let stream
+        const preferred = get().preferredDeviceId
+        try {
+          const constraints = preferred ? { audio: { deviceId: { exact: preferred } } } : { audio: true }
+          stream = await navigator.mediaDevices.getUserMedia(constraints)
+        } catch (e1) {
+          console.warn('[REMOTE] preferred mic failed, falling back to default:', e1?.name)
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        }
+        let mimeType = ''
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus'
+        } else if (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+          mimeType = 'audio/ogg;codecs=opus'
+        } else {
+          mimeType = 'audio/webm'
+        }
+
+        const setupRecorder = () => {
+          const recorder = new MediaRecorder(stream, { mimeType })
+          recorder.ondataavailable = async (e) => {
+            const blob = e.data
+            if (!blob || blob.size === 0) return
+            // nextSendAt is set when we schedule the next rotation
+
+            const processBlob = async (b) => {
+              try {
+                const fileName = mimeType.includes('ogg') ? 'chunk.ogg' : 'chunk.webm'
+                const file = new File([b], fileName, { type: mimeType })
+
+                const form = new FormData()
+                form.append('chunk', file)
+                form.append('mimeType', mimeType)
+                form.append('mode', 'cloud')
+
+                const res = await fetch('/api/transcribe', { method: 'POST', body: form })
+                const data = await res.json()
+                const finalized = (data && typeof data.text === 'string' && data.text.trim()) ? data.text.trim() : ''
+                if (finalized) {
+                  const transcript = {
+                    seq: Date.now(),
+                    text: finalized,
+                    timestamp: new Date().toLocaleTimeString()
+                  }
+                  set(state => ({
+                    recentTranscripts: [transcript, ...state.recentTranscripts.slice(0, 9)]
+                  }))
+                }
+              } catch (err) {
+                console.error('[REMOTE] send chunk failed:', err)
+                set({ errorMessage: 'Failed to send audio chunk', errorCode: 'remote-send-failed' })
+              }
+            }
+
+            const s = get()
+            if (s.remoteInFlight) {
+              set({ remotePendingBlob: blob })
+              return
+            }
+            set({ remoteInFlight: true, isSending: true })
+            await processBlob(blob)
+            // Drain one pending blob if present (keep latest)
+            const pending = get().remotePendingBlob
+            if (pending) {
+              set({ remotePendingBlob: null })
+              await processBlob(pending)
+            }
+            set({ remoteInFlight: false, isSending: false })
+          }
+          recorder.onstop = () => {
+            const s = get()
+            if (!s.isRecording) return
+            // Immediately start a new recorder to minimize gap
+            const newRec = setupRecorder()
+            newRec.start()
+            // Schedule next rotation
+            try { if (s.remoteRotateTimer) clearTimeout(s.remoteRotateTimer) } catch { }
+            const nextTimer = setTimeout(() => {
+              try { newRec.stop() } catch { }
+            }, get().chunkIntervalMs)
+            set({ mediaRecorder: newRec, remoteRotateTimer: nextTimer, nextSendAt: Date.now() + get().chunkIntervalMs })
+          }
+          return recorder
+        }
+
+        const rec = setupRecorder()
+
+        rec.start()
+        const rotateTimer = setTimeout(() => {
+          try { rec.stop() } catch { }
+        }, get().chunkIntervalMs)
+        set({ mediaStream: stream, mediaRecorder: rec, remoteInFlight: false, remotePendingBlob: null, remoteRotateTimer: rotateTimer, nextSendAt: Date.now() + get().chunkIntervalMs })
+        get().startAudioMonitor(stream)
+        return
+      } catch (e) {
+        console.warn('[REMOTE] failed to start:', e)
+        const msg = 'Microphone access failed or MediaRecorder unsupported.'
+        set({ errorMessage: msg, errorCode: 'remote-start-failed' })
+        return
+      }
+    }
+
+    // Local (browser) STT
+    // If a preferred device is chosen, open a stream for monitoring so the level bar reflects that mic.
+    try {
+      const preferred = get().preferredDeviceId
+      if (preferred) {
+        try {
+          const monitorStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: preferred } } })
+          set({ mediaStream: monitorStream })
+          get().startAudioMonitor(monitorStream)
+        } catch (monErr) {
+          console.warn('[LOCAL] preferred mic monitor failed, fallback to default monitor:', monErr?.name)
+          try {
+            const monitorStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            set({ mediaStream: monitorStream })
+            get().startAudioMonitor(monitorStream)
+          } catch (_) { }
+        }
+      }
+    } catch (_) { }
+
     const SR = window.webkitSpeechRecognition || window.SpeechRecognition
     if (!SR) {
       const msg = 'Speech Recognition is not supported in this browser.'
@@ -71,7 +265,11 @@ export const useTranscriptionStore = create((set, get) => ({
           }
         } else {
           const partial = res[0]?.transcript?.trim() || ""
-          set({ currentPartial: partial, _lastHeardAt: partial ? Date.now() : get()._lastHeardAt })
+          set(state => ({
+            currentPartial: partial,
+            _lastHeardAt: partial ? Date.now() : get()._lastHeardAt,
+            audioLevel: partial ? Math.min(1, state.audioLevel * 0.5 + 0.5) : state.audioLevel
+          }))
         }
       }
     }
@@ -95,6 +293,7 @@ export const useTranscriptionStore = create((set, get) => ({
         case 'network':
           message = 'Network error occurred with speech recognition.'
           toast.warning(message)
+          try { get().stopRecording() } catch { }
           break
         case 'aborted':
           // user-initiated stop; ignore
@@ -175,7 +374,7 @@ export const useTranscriptionStore = create((set, get) => ({
       toast.error(msg)
     }
 
-    // Start send + silence check timer
+    // Start send + silence check timer (local mode)
     const timer = setInterval(() => {
       const current = get()
       if (!current.isRecording) return
@@ -193,7 +392,8 @@ export const useTranscriptionStore = create((set, get) => ({
       if (!current.isSending) {
         current.sendText()
       }
-    }, 5000)
+      set({ nextSendAt: Date.now() + get().chunkIntervalMs })
+    }, get().chunkIntervalMs)
 
     set({ sendTimer: timer })
   },
@@ -209,14 +409,34 @@ export const useTranscriptionStore = create((set, get) => ({
       try { clearTimeout(store._restartTimer) } catch { }
     }
 
+    if (store.mediaRecorder) {
+      try { store.mediaRecorder.stop() } catch { }
+    }
+    if (store.remoteRotateTimer) {
+      try { clearTimeout(store.remoteRotateTimer) } catch { }
+    }
+    if (store.mediaStream) {
+      try { store.mediaStream.getTracks().forEach(t => t.stop()) } catch { }
+    }
+    get().stopAudioMonitor()
+
     if (store.recognition) {
       try { store.recognition.stop() } catch { }
+    }
+
+    if (store.audioLevelTimer) {
+      try { clearInterval(store.audioLevelTimer) } catch { }
     }
 
     set({
       isRecording: false,
       sendTimer: null,
       recognition: null,
+      mediaStream: null,
+      mediaRecorder: null,
+      nextSendAt: 0,
+      audioLevel: 0,
+      audioLevelTimer: null,
       textArray: [],
       currentPartial: '',
       _recordingStartedAt: 0,
@@ -232,7 +452,12 @@ export const useTranscriptionStore = create((set, get) => ({
 
   stopAndFlush: async () => {
     const store = get()
-    // Stop timers and recognition first
+    // Remote mode: just stop recording; nothing to flush client-side
+    if (store.recognitionMode === 'remote') {
+      get().stopRecording()
+      return
+    }
+    // Stop timers and recognition first (local)
     if (store.sendTimer) {
       clearInterval(store.sendTimer)
     }

@@ -18,7 +18,6 @@ function getSpeechClient() {
       if (!json.client_email || !json.private_key) {
         throw new Error('Missing client_email or private_key in GOOGLE_APPLICATION_CREDENTIALS JSON')
       }
-      console.log('[speech] using credentials from JSON in GOOGLE_APPLICATION_CREDENTIALS')
       return new SpeechClient({ projectId, credentials: { client_email: json.client_email, private_key: json.private_key } })
     } catch (e) {
       console.error('[speech] Failed to parse GOOGLE_APPLICATION_CREDENTIALS as JSON:', e?.message)
@@ -30,11 +29,8 @@ function getSpeechClient() {
     if (!fs.existsSync(gac)) {
       throw new Error(`GOOGLE_APPLICATION_CREDENTIALS path does not exist: ${gac}`)
     }
-    console.log('[speech] using credentials from path in GOOGLE_APPLICATION_CREDENTIALS')
     return new SpeechClient()
   }
-  // Mode C: ADC (gcloud or metadata)
-  console.log('[speech] using Application Default Credentials (no GOOGLE_APPLICATION_CREDENTIALS provided)')
   return new SpeechClient()
 }
 
