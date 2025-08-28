@@ -19,6 +19,27 @@ import {
 
 // Simple text-only "record" MVP to align with stateless 5s chunks approach
 export default function RecordScreen() {
+  const hasAudio = !!(AudioModule as any)?.requestRecordingPermissionsAsync;
+  // Simple gate to avoid crashing in Expo Go where expo-audio native module isn't available
+  if (!hasAudio) {
+    return (
+      <ParallaxScrollView headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }} headerImage={<ThemedView />}>
+        <ThemedView style={styles.container}>
+          <ThemedText type="title">Recorder</ThemedText>
+          <ThemedText style={styles.statusIdle}>
+            Audio module unavailable. Build a dev client to enable recording.
+          </ThemedText>
+          <ThemedText>
+            Run: npx expo run:ios (or EAS build) and open the built app instead of Expo Go.
+          </ThemedText>
+        </ThemedView>
+      </ParallaxScrollView>
+    );
+  }
+  return <RecordScreenInner />
+}
+
+function RecordScreenInner() {
   // Preview text buffer (type now, audio STT coming soon)
   const [recentTranscripts, setRecentTranscripts] = useState<{ seq: number; text: string; timestamp: string }[]>([]);
   const [isRecording, setIsRecording] = useState(false);
