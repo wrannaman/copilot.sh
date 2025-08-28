@@ -26,6 +26,9 @@ export default function SettingsScreen() {
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [sbUrl, setSbUrl] = useState('');
   const [sbAnon, setSbAnon] = useState('');
+  const [initialApiBaseUrl, setInitialApiBaseUrl] = useState('');
+  const [initialSbUrl, setInitialSbUrl] = useState('');
+  const [initialSbAnon, setInitialSbAnon] = useState('');
   const [saving, setSaving] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
@@ -38,13 +41,16 @@ export default function SettingsScreen() {
           AsyncStorage.getItem(KEY_SB_URL),
           AsyncStorage.getItem(KEY_SB_ANON),
         ]);
-        if (a) setApiBaseUrl(a);
-        if (su) setSbUrl(su);
-        if (sa) setSbAnon(sa);
         const extras = (Constants?.expoConfig?.extra || {}) as any;
-        if (!a && extras.apiBaseUrl) setApiBaseUrl(extras.apiBaseUrl);
-        if (!su && extras.supabaseUrl) setSbUrl(extras.supabaseUrl);
-        if (!sa && extras.supabaseAnon) setSbAnon(extras.supabaseAnon);
+        const resolvedApi = a || extras.apiBaseUrl || '';
+        const resolvedSbUrl = su || extras.supabaseUrl || '';
+        const resolvedSbAnon = sa || extras.supabaseAnon || '';
+        setApiBaseUrl(resolvedApi);
+        setSbUrl(resolvedSbUrl);
+        setSbAnon(resolvedSbAnon);
+        setInitialApiBaseUrl(resolvedApi);
+        setInitialSbUrl(resolvedSbUrl);
+        setInitialSbAnon(resolvedSbAnon);
         // Check Supabase session
         try {
           const supabase = getSupabase();
@@ -70,22 +76,49 @@ export default function SettingsScreen() {
   async function save() {
     setSaving(true);
     try {
+      const nextApi = apiBaseUrl.trim();
+      const nextSbUrl = sbUrl.trim();
+      const nextSbAnon = sbAnon.trim();
+      const apiChanged = nextApi !== initialApiBaseUrl;
+      const supabaseChanged = nextSbUrl !== initialSbUrl || nextSbAnon !== initialSbAnon;
+
       await Promise.all([
-        AsyncStorage.setItem(KEY_API_BASE, apiBaseUrl.trim()),
-        AsyncStorage.setItem(KEY_SB_URL, sbUrl.trim()),
-        AsyncStorage.setItem(KEY_SB_ANON, sbAnon.trim()),
+        AsyncStorage.setItem(KEY_API_BASE, nextApi),
+        AsyncStorage.setItem(KEY_SB_URL, nextSbUrl),
+        AsyncStorage.setItem(KEY_SB_ANON, nextSbAnon),
       ]);
-      // Expose to global for simple access in MVP
-      (globalThis as any).__COPILOT_API_BASE_URL__ = apiBaseUrl.trim();
-      await setSupabaseConfig(sbUrl.trim(), sbAnon.trim());
-      try {
-        const supabase = getSupabase();
-        const { data } = await supabase.auth.getSession();
-        setIsAuthed(!!data?.session);
-      } catch {
+      (globalThis as any).__COPILOT_API_BASE_URL__ = nextApi;
+
+      if (apiChanged || supabaseChanged) {
+        try {
+          const supabase = getSupabase();
+          await supabase.auth.signOut();
+        } catch { }
+        // Best-effort: purge any Supabase auth/session keys from AsyncStorage
+        try {
+          const keys = await AsyncStorage.getAllKeys();
+          const toRemove = keys.filter((k) => /^(sb-|@supabase|supabase)/i.test(k) || /supabase.*(auth|token|session)/i.test(k) || /(auth|token|session).*supabase/i.test(k));
+          if (toRemove.length) await AsyncStorage.multiRemove(toRemove);
+        } catch { }
+        if (supabaseChanged) {
+          await setSupabaseConfig(nextSbUrl, nextSbAnon);
+        }
         setIsAuthed(false);
+        Alert.alert('Saved', 'Settings updated. Please sign in again.');
+        router.replace('/login');
+        return;
+      } else {
+        // No breaking changes; refresh config and session status
+        await setSupabaseConfig(nextSbUrl, nextSbAnon);
+        try {
+          const supabase = getSupabase();
+          const { data } = await supabase.auth.getSession();
+          setIsAuthed(!!data?.session);
+        } catch {
+          setIsAuthed(false);
+        }
+        Alert.alert('Saved', 'Settings updated');
       }
-      Alert.alert('Saved', 'Settings updated');
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to save');
     } finally {

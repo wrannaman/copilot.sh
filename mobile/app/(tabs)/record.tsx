@@ -55,6 +55,7 @@ function RecordScreenInner() {
   const lastTranscriptRef = useRef<string>('');
   const sentCharsRef = useRef<number>(0);
   const ROLLBACK_CHARS = 15; // small overlap to absorb STT corrections
+  const MAX_TAIL_CHARS = 5000; // cap stored transcript tail to bound memory
   const lastSentTextRef = useRef<string>('');
 
   function removeOverlapWords(oldText: string, newText: string, maxOverlapWords: number = 20): string {
@@ -109,6 +110,23 @@ function RecordScreenInner() {
     })();
   }, []);
 
+  // Stop recording immediately without attempting to flush pending buffers
+  const stopRecordingImmediately = useCallback(async () => {
+    try {
+      if (sendTimerRef.current) {
+        try { clearInterval(sendTimerRef.current as any); } catch { }
+        sendTimerRef.current = null;
+      }
+      setIsRecording(false);
+      if (USE_LOCAL_STT) {
+        try { await (Voice as any).stop?.(); } catch { }
+        try { await (Voice as any).destroy?.(); } catch { }
+      } else {
+        try { await audioRecorder.stop(); } catch { }
+      }
+    } catch { }
+  }, [USE_LOCAL_STT, audioRecorder]);
+
   const sendChunk = useCallback(async (uri: string) => {
     try {
       setIsSending(true);
@@ -137,6 +155,10 @@ function RecordScreenInner() {
       });
       const data = await res.json().catch(() => ({}));
       console.log('[cloud] response', res.status, data);
+      if (res.status === 401 || data?.message === 'Unauthorized') {
+        await stopRecordingImmediately();
+        throw new Error('Unauthorized');
+      }
       if (!res.ok) {
         throw new Error(data?.message || `Failed: ${res.status}`);
       }
@@ -154,7 +176,7 @@ function RecordScreenInner() {
     } finally {
       setIsSending(false);
     }
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, stopRecordingImmediately]);
 
   const sendText = useCallback(async (textToSend: string): Promise<string | null> => {
     try {
@@ -164,17 +186,26 @@ function RecordScreenInner() {
       const supabase = getSupabase();
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token || '';
+      console.log("🚀 ~ accessToken:", accessToken)
       const form = new FormData();
       form.append('mode', 'browser');
       form.append('text', textToSend);
-      const res = await fetch(`${apiBaseUrl}/api/transcribe`, {
+      console.log("🚀 ~ `${apiBaseUrl}/api/transcribe`:", `${apiBaseUrl}/api/transcribe`)
+      const sending = {
         method: 'POST',
         headers: {
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: form as any,
-      });
+      }
+      console.log("🚀 ~ sending:", sending)
+      const res = await fetch(`${apiBaseUrl}/api/transcribe`, sending);
+      console.log('req headers', res.headers);
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401 || data?.message === 'Unauthorized') {
+        await stopRecordingImmediately();
+        throw new Error('Unauthorized');
+      }
       if (!res.ok) throw new Error(data?.message || `Failed: ${res.status}`);
       const finalized = (data && typeof data.text === 'string' && data.text.trim()) ? data.text.trim() : textToSend;
       if (finalized) {
@@ -193,7 +224,7 @@ function RecordScreenInner() {
     } finally {
       setIsSending(false);
     }
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, stopRecordingImmediately]);
 
   const startRecording = useCallback(async () => {
     if (isRecording) return;
@@ -282,6 +313,15 @@ function RecordScreenInner() {
             }
             sentCharsRef.current = boundaryIdx >= 0 ? (windowStart + boundaryIdx + 1) : clamp;
 
+            // Cap stored transcript tail to bound memory between STT updates
+            if (lastTranscriptRef.current.length > MAX_TAIL_CHARS) {
+              const oldLen = lastTranscriptRef.current.length;
+              lastTranscriptRef.current = lastTranscriptRef.current.slice(-MAX_TAIL_CHARS);
+              const trimmed = oldLen - lastTranscriptRef.current.length; // amount removed from the front
+              sentCharsRef.current = Math.max(0, sentCharsRef.current - trimmed);
+              console.log('[memory] Pruned tail', { trimmed, anchorAfter: sentCharsRef.current, tailLen: lastTranscriptRef.current.length });
+            }
+
             // Clear the UI buffer since we sent it; next STT update will rebuild delta from anchor
             setInProgressText('');
           }).catch(() => { });
@@ -353,6 +393,18 @@ function RecordScreenInner() {
     } catch { }
   }, [audioRecorder, sendChunk, USE_LOCAL_STT, sendText, inProgressText]);
 
+  const onReset = useCallback(() => {
+    try { (Voice as any)?.removeAllListeners?.(); } catch { }
+    // Clear UI and buffers
+    setRecentTranscripts([]);
+    setInProgressText('');
+    inProgressTextRef.current = '';
+    lastTranscriptRef.current = '';
+    lastSentTextRef.current = '';
+    sentCharsRef.current = 0;
+    console.log('[reset] cleared recent transcripts and STT buffers');
+  }, []);
+
   if (!authChecked) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -379,18 +431,28 @@ function RecordScreenInner() {
           ) : (
             <ThemedText style={styles.statusIdle}>Idle</ThemedText>
           )}
-          <Pressable
-            onPress={isRecording ? stopAndFlush : startRecording}
-            style={[styles.micButton, isRecording ? styles.micStop : styles.micStart]}
-            accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            {isRecording ? (
-              <Ionicons name="stop" size={32} color="#ffffff" />
-            ) : (
-              <Ionicons name="mic" size={32} color="#ffffff" />
-            )}
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable
+              onPress={onReset}
+              style={styles.resetButton}
+              accessibilityLabel={'Reset buffers'}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="refresh" size={20} color="#374151" />
+            </Pressable>
+            <Pressable
+              onPress={isRecording ? stopAndFlush : startRecording}
+              style={[styles.micButton, isRecording ? styles.micStop : styles.micStart]}
+              accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              {isRecording ? (
+                <Ionicons name="stop" size={32} color="#ffffff" />
+              ) : (
+                <Ionicons name="mic" size={32} color="#ffffff" />
+              )}
+            </Pressable>
+          </View>
         </View>
 
         {previewText ? (
@@ -452,6 +514,17 @@ const styles = StyleSheet.create({
   },
   micStop: {
     backgroundColor: '#dc2626',
+  },
+  resetButton: {
+    height: 40,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    backgroundColor: '#ffffff',
   },
   inputWrap: {
     borderWidth: 1,

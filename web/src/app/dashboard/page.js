@@ -19,6 +19,7 @@ import { SearchComponent } from '@/components/search/search';
 // Removed inline GoogleCalendarCard from dashboard; use dedicated Integrations page
 import QuickActions from '@/components/dashboard/QuickActions'
 import SessionsPanel from '@/components/dashboard/SessionsPanel'
+import TextIngestCard from '@/components/dashboard/TextIngestCard'
 
 function DashboardContent() {
   const { user, currentOrganization } = useAuth();
@@ -96,6 +97,11 @@ function DashboardContent() {
               {/* Quick Actions */}
               <div className="w-full max-w-4xl mx-auto">
                 <QuickActions />
+              </div>
+
+              {/* Text Ingest */}
+              <div className="w-full max-w-4xl mx-auto">
+                <TextIngestCard />
               </div>
             </div>
           )}

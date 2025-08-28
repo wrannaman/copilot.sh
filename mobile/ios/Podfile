@@ -60,5 +60,53 @@ target 'copilotsh' do
         end
       end
     end
+
+    # Ensure dSYMs are generated for Release (fixes missing Hermes dSYM on archive)
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        if config.name == 'Release'
+          config.build_settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf-with-dsym'
+          config.build_settings['GCC_GENERATE_DEBUGGING_SYMBOLS'] = 'YES'
+          # Avoid stripping symbols from the installed product in Release
+          config.build_settings['STRIP_INSTALLED_PRODUCT'] = 'NO'
+          config.build_settings['COPY_PHASE_STRIP'] = 'NO'
+        end
+      end
+    end
+
+    # Add a script phase to bundle Hermes dSYM into the archive (if present)
+    installer.aggregate_targets.each do |aggregate_target|
+      aggregate_target.user_project.native_targets.each do |native_target|
+        next unless native_target.name == 'copilotsh'
+
+        phase_name = 'Bundle Hermes dSYM'
+        already_added = native_target.shell_script_build_phases.any? { |bp| bp.name == phase_name }
+        unless already_added
+          script_phase = native_target.new_shell_script_build_phase(phase_name)
+          script_phase.shell_path = '/bin/sh'
+          script_phase.shell_script = <<-EOS
+set -e
+
+# Copy any Hermes dSYM we can find under Pods into the archive's dSYM folder
+if [ -n "${DWARF_DSYM_FOLDER_PATH}" ]; then
+  PODS_ROOT_ESCAPED="${PODS_ROOT// /\\ }"
+  DEST_DSYM_DIR="${DWARF_DSYM_FOLDER_PATH}"
+  # Prefer built dSYM if it exists
+  if [ -d "${PODS_CONFIGURATION_BUILD_DIR}/hermes-engine/hermes.framework.dSYM" ]; then
+    ditto "${PODS_CONFIGURATION_BUILD_DIR}/hermes-engine/hermes.framework.dSYM" "${DEST_DSYM_DIR}/hermes.framework.dSYM"
+  else
+    # Fallback: search prebuilt artifacts under Pods
+    FOUND_HERMES_DSYM=$(find "${PODS_ROOT_ESCAPED}" -type d -name 'hermes.framework.dSYM' 2>/dev/null | head -n 1)
+    if [ -n "${FOUND_HERMES_DSYM}" ]; then
+      ditto "${FOUND_HERMES_DSYM}" "${DEST_DSYM_DIR}/hermes.framework.dSYM"
+    fi
+  fi
+fi
+          EOS
+          # Only run during install/archive (not for every build)
+          script_phase.run_only_for_deployment_postprocessing = '1'
+        end
+      end
+    end
   end
 end
