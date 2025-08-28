@@ -51,3 +51,5 @@ pi.md
 
 node_modules
 .env
+
+*.p8

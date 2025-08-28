@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "copilot.sh",
-    "slug": "copilot-sh",
+    "slug": "copilot.sh",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -9,14 +9,23 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.wrannaman.copilot",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "We use the microphone to capture short audio snippets for transcription."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -33,6 +42,12 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
+        }
       ]
     ],
     "experiments": {
@@ -42,7 +57,10 @@
       "router": {},
       "eas": {
         "projectId": "8b7f8a87-b0fb-47df-bcf1-2dae7ff4b09c"
-      }
+      },
+      "apiBaseUrl": "http://192.168.5.70:3000",
+      "supabaseUrl": "https://stwnwheonabvcxaysyva.supabase.co",
+      "supabaseAnon": "sb_publishable_O3Mq9YNbinv6j4LXN-HCYA_JuMRSMK0"
     },
     "owner": "wrannaman"
   }

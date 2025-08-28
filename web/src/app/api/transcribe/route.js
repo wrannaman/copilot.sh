@@ -41,46 +41,64 @@ function getSpeechClient() {
 export async function POST(request) {
   console.log('🚨 [transcribe] API HIT! Request received')
   try {
-    // Require auth (user session or device key)
+    // Require auth (user session via cookie, Supabase JWT, or device key)
     let supabase = await createAuthClient()
     let { data, error } = await supabase.auth.getUser()
-    console.log('🔐 [transcribe] Auth check:', { hasUser: !!data?.user, error: error?.message })
+    console.log('🔐 [transcribe] Auth check (cookie):', { hasUser: !!data?.user, error: error?.message })
 
     let deviceMode = false
     let deviceUserId = null
     let deviceOrgId = null
 
     if (error || !data?.user) {
-      // Attempt device key auth
       const authHeader = request.headers.get('authorization') || ''
+      const headerKey = request.headers.get('x-device-key') || ''
       const bearer = authHeader.toLowerCase().startsWith('bearer ')
         ? authHeader.slice(7).trim()
         : ''
-      const headerKey = request.headers.get('x-device-key') || ''
-      const deviceKey = bearer || headerKey
-      if (!deviceKey) {
-        return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+
+      // First, try Supabase JWT (mobile/clients pass access token)
+      if (bearer) {
+        try {
+          const svc = createServiceClient()
+          const { data: jwtUser, error: jwtErr } = await svc.auth.getUser(bearer)
+          if (!jwtErr && jwtUser?.user) {
+            data = { user: jwtUser.user }
+            supabase = svc
+            console.log('🔓 [transcribe] Authenticated via Supabase JWT header')
+          }
+        } catch (jwtCheckErr) {
+          console.warn('⚠️ [transcribe] JWT check failed, will try device key:', jwtCheckErr?.message)
+        }
       }
 
-      // Look up device key in DB
-      const svc = createServiceClient()
-      const { data: deviceRow, error: deviceErr } = await svc
-        .from('device_api_keys')
-        .select('user_id, organization_id, active')
-        .eq('key', deviceKey)
-        .maybeSingle()
+      // If still no user, attempt device key auth (for headless devices)
+      if (!data?.user) {
+        const deviceKey = headerKey || (!bearer ? '' : '')
+        if (!deviceKey) {
+          return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+        }
 
-      if (deviceErr || !deviceRow || deviceRow.active === false) {
-        return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+        // Look up device key in DB
+        const svc = createServiceClient()
+        const { data: deviceRow, error: deviceErr } = await svc
+          .from('device_api_keys')
+          .select('user_id, organization_id, active')
+          .eq('key', deviceKey)
+          .maybeSingle()
+
+        if (deviceErr || !deviceRow || deviceRow.active === false) {
+          return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+        }
+
+        deviceMode = true
+        deviceUserId = deviceRow.user_id
+        deviceOrgId = deviceRow.organization_id
+        supabase = svc
+        // Best-effort update last_used_at
+        svc.from('device_api_keys').update({ last_used_at: new Date().toISOString() }).eq('key', deviceKey).then(() => { }).catch(() => { })
+        console.log('🔑 [transcribe] Device key auth accepted and mapped to user/org')
       }
-
-      deviceMode = true
-      deviceUserId = deviceRow.user_id
-      deviceOrgId = deviceRow.organization_id
-      supabase = svc
-      // Best-effort update last_used_at
-      svc.from('device_api_keys').update({ last_used_at: new Date().toISOString() }).eq('key', deviceKey).then(() => { }).catch(() => { })
-      console.log('🔑 [transcribe] Device key auth accepted and mapped to user/org')
     }
 
     // Process audio chunk and save to daily session

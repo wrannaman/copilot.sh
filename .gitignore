@@ -4,3 +4,4 @@ web/credentials/*
 .cursor
 .env
 *.log
+README.internal.md

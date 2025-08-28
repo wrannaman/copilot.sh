@@ -2,7 +2,7 @@
 
 # dependencies
 node_modules/
-
+.vscode
 # Expo
 .expo/
 dist/
@@ -37,3 +37,7 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+eas.json
+app.config.js
+eas.json
+app.json
