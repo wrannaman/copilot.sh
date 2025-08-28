@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, TextInput, View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
@@ -8,12 +8,21 @@ import { Button } from '@/components/ui/button';
 import Constants from 'expo-constants';
 import { getSupabase, setSupabaseConfig } from '@/lib/supabase';
 import { Redirect, router } from 'expo-router';
+import { useColorScheme } from '@/hooks/useColorScheme';
 
 const KEY_API_BASE = 'copilot.apiBaseUrl';
 const KEY_SB_URL = 'copilot.supabaseUrl';
 const KEY_SB_ANON = 'copilot.supabaseAnon';
 
 export default function SettingsScreen() {
+  const scheme = useColorScheme();
+  const isDark = scheme === 'dark';
+  const inputColors = useMemo(() => ({
+    borderColor: isDark ? '#374151' : '#dddddd',
+    backgroundColor: isDark ? '#111827' : '#ffffff',
+    textColor: isDark ? '#f9fafb' : '#111111',
+    placeholder: isDark ? '#9CA3AF' : '#999999',
+  }), [isDark]);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [sbUrl, setSbUrl] = useState('');
   const [sbAnon, setSbAnon] = useState('');
@@ -110,9 +119,9 @@ export default function SettingsScreen() {
         <View style={styles.field}>
           <ThemedText type="defaultSemiBold">API Base URL</ThemedText>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
             placeholder="https://your-deploy.example.com"
-            placeholderTextColor="#999999"
+            placeholderTextColor={inputColors.placeholder}
             value={apiBaseUrl}
             onChangeText={setApiBaseUrl}
             autoCapitalize="none"
@@ -123,9 +132,9 @@ export default function SettingsScreen() {
         <View style={styles.field}>
           <ThemedText type="defaultSemiBold">Supabase URL</ThemedText>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
             placeholder="https://xxx.supabase.co"
-            placeholderTextColor="#999999"
+            placeholderTextColor={inputColors.placeholder}
             value={sbUrl}
             onChangeText={setSbUrl}
             autoCapitalize="none"
@@ -135,9 +144,9 @@ export default function SettingsScreen() {
         <View style={styles.field}>
           <ThemedText type="defaultSemiBold">Supabase Anon Key</ThemedText>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
             placeholder="paste anon key"
-            placeholderTextColor="#999999"
+            placeholderTextColor={inputColors.placeholder}
             value={sbAnon}
             onChangeText={setSbAnon}
             autoCapitalize="none"

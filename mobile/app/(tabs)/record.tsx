@@ -9,13 +9,13 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import {
   useAudioRecorder,
-  RecordingPresets,
   AudioModule,
   setAudioModeAsync,
   useAudioRecorderState,
   IOSOutputFormat,
   AudioQuality,
 } from 'expo-audio';
+import Voice from '@react-native-voice/voice';
 
 // Simple text-only "record" MVP to align with stateless 5s chunks approach
 export default function RecordScreen() {
@@ -47,9 +47,37 @@ function RecordScreenInner() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const sendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [chunksSent, setChunksSent] = useState(0);
-  const [lastStatus, setLastStatus] = useState<string>('');
-  const [wordsSoFar, setWordsSoFar] = useState<string[]>([]);
+  // liveTranscript removed; UI shows pending buffer instead
+  const [inProgressText, setInProgressText] = useState<string>('');
+  const isRecordingRef = useRef(false);
+  const isSendingRef = useRef(false);
+  const inProgressTextRef = useRef<string>('');
+  const lastTranscriptRef = useRef<string>('');
+  const sentCharsRef = useRef<number>(0);
+  const ROLLBACK_CHARS = 15; // small overlap to absorb STT corrections
+  const lastSentTextRef = useRef<string>('');
+
+  function removeOverlapWords(oldText: string, newText: string, maxOverlapWords: number = 20): string {
+    const oldWords = (oldText || '').trim().split(' ').filter(Boolean);
+    const newWords = (newText || '').trim().split(' ').filter(Boolean);
+    const maxK = Math.min(maxOverlapWords, oldWords.length, newWords.length);
+    for (let k = maxK; k > 0; k--) {
+      let match = true;
+      for (let i = 0; i < k; i++) {
+        if (oldWords[oldWords.length - k + i] !== newWords[i]) { match = false; break; }
+      }
+      if (match) {
+        return newWords.slice(k).join(' ');
+      }
+    }
+    return newWords.join(' ');
+  }
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isSendingRef.current = isSending; }, [isSending]);
+  useEffect(() => { inProgressTextRef.current = inProgressText; }, [inProgressText]);
+  // Show pending buffer in UI
+  const previewText = inProgressText;
+  const USE_LOCAL_STT = true;
 
   const audioRecorder = useAudioRecorder({
     extension: '.wav',
@@ -62,7 +90,9 @@ function RecordScreenInner() {
       linearPCMIsBigEndian: false,
       linearPCMIsFloat: false,
     },
-  } as any);
+  } as any, (status) => {
+    console.log('[rec] status', status);
+  });
   const recorderState = useAudioRecorderState(audioRecorder);
 
   const apiBaseUrl = useMemo(() => (globalThis as any).__COPILOT_API_BASE_URL__ || 'http://localhost:3000', []);
@@ -82,8 +112,7 @@ function RecordScreenInner() {
   const sendChunk = useCallback(async (uri: string) => {
     try {
       setIsSending(true);
-      setLastStatus('Uploading…');
-      console.log('[rec] sending chunk', { uri });
+      console.log('[cloud] sending chunk', { uri });
       const supabase = getSupabase();
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token || '';
@@ -107,7 +136,7 @@ function RecordScreenInner() {
         body: form as any,
       });
       const data = await res.json().catch(() => ({}));
-      console.log('[rec] response', res.status, data);
+      console.log('[cloud] response', res.status, data);
       if (!res.ok) {
         throw new Error(data?.message || `Failed: ${res.status}`);
       }
@@ -117,14 +146,50 @@ function RecordScreenInner() {
           { seq: Date.now(), text: finalized, timestamp: new Date().toLocaleTimeString() },
           ...prev.slice(0, 9)
         ]);
-        setWordsSoFar(prev => [...prev, ...finalized.split(/\s+/).filter(Boolean)]);
       }
-      setChunksSent(c => c + 1);
-      setLastStatus('Saved');
+      console.log('[cloud] saved');
     } catch (e: any) {
-      setLastStatus(e?.message || 'Upload failed');
-      console.log('[rec] upload failed', e?.message);
+      console.log('[cloud] upload failed', e?.message);
       Alert.alert('Error', e?.message || 'Failed to save');
+    } finally {
+      setIsSending(false);
+    }
+  }, [apiBaseUrl]);
+
+  const sendText = useCallback(async (textToSend: string): Promise<string | null> => {
+    try {
+      if (!textToSend || !textToSend.trim()) return null;
+      console.log('[send] POST /api/transcribe text length=', textToSend.length);
+      setIsSending(true);
+      const supabase = getSupabase();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token || '';
+      const form = new FormData();
+      form.append('mode', 'browser');
+      form.append('text', textToSend);
+      const res = await fetch(`${apiBaseUrl}/api/transcribe`, {
+        method: 'POST',
+        headers: {
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: form as any,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || `Failed: ${res.status}`);
+      const finalized = (data && typeof data.text === 'string' && data.text.trim()) ? data.text.trim() : textToSend;
+      if (finalized) {
+        console.log('[send] saved transcript text:', finalized);
+        setRecentTranscripts(prev => [
+          { seq: Date.now(), text: finalized, timestamp: new Date().toLocaleTimeString() },
+          ...prev.slice(0, 9)
+        ]);
+      }
+      console.log('[send] saved');
+      return textToSend;
+    } catch (e: any) {
+      console.log('[sendText] failed', e?.message);
+      Alert.alert('Error', e?.message || 'Failed to save');
+      return null;
     } finally {
       setIsSending(false);
     }
@@ -138,6 +203,91 @@ function RecordScreenInner() {
         return Alert.alert('Microphone denied');
       }
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+      if (USE_LOCAL_STT) {
+        try { (Voice as any)?.removeAllListeners?.(); } catch { }
+        try { await (Voice as any)?.requestPermissions?.(); } catch { }
+        Voice.onSpeechStart = () => { console.log('[stt] onSpeechStart'); };
+        const handleTranscriptUpdate = (newFullText: string) => {
+          // Only update if the text has actually changed
+          if (newFullText === lastTranscriptRef.current) return;
+
+          lastTranscriptRef.current = newFullText;
+          // If STT regressed (shorter than what we've marked sent), roll anchor back inside bounds
+          if (newFullText.length < sentCharsRef.current) {
+            sentCharsRef.current = Math.max(0, newFullText.length - ROLLBACK_CHARS);
+          }
+          const delta = newFullText.substring(sentCharsRef.current);
+          setInProgressText(delta);
+        };
+
+        Voice.onSpeechPartialResults = (e: any) => {
+          const parts: string[] = e?.value || [];
+          if (parts && parts.length) {
+            const text = (parts[0] || '').trim();
+            handleTranscriptUpdate(text);
+          }
+        };
+        Voice.onSpeechResults = (e: any) => {
+          const lines: string[] = e?.value || [];
+          const text = (lines[0] || '').trim();
+          if (text) {
+            console.log('[stt] final result:', text);
+            handleTranscriptUpdate(text);
+          }
+        };
+        Voice.onSpeechError = (e: any) => {
+          console.log('[stt] error:', e);
+        };
+        await (Voice as any).start?.('en-US');
+        lastTranscriptRef.current = '';
+        setIsRecording(true);
+        // Start periodic text send
+        if (sendTimerRef.current) try { clearInterval(sendTimerRef.current as any); } catch { }
+        sendTimerRef.current = setInterval(() => {
+          // Timer's only job is to send the state. No recalculations.
+          if (!isRecordingRef.current || isSendingRef.current || !inProgressTextRef.current.trim()) {
+            return;
+          }
+
+          const candidate = inProgressTextRef.current;
+          const pruned = removeOverlapWords(lastSentTextRef.current, candidate);
+          if (!pruned.trim()) return;
+
+          const textToSend = pruned;
+          console.log('[timer] sending buffer:', textToSend.slice(0, 50) + '...');
+          sendText(textToSend).then(sent => {
+            if (!sent) return;
+
+            // Track the last exact text we successfully sent to strip future overlaps
+            lastSentTextRef.current = sent;
+
+            // Advance numeric anchor by exactly what we sent, then apply small rollback overlap
+            let tentative = sentCharsRef.current + sent.length - ROLLBACK_CHARS;
+            tentative = Math.max(0, tentative);
+
+            // Subtle fix: snap the anchor to the previous word boundary within a small lookback window
+            const fullNow = lastTranscriptRef.current || '';
+            const clamp = Math.min(tentative, fullNow.length);
+            const LOOKBACK = 15;
+            const windowStart = Math.max(0, clamp - LOOKBACK);
+            const slice = fullNow.slice(windowStart, clamp);
+            // Find last whitespace-like boundary (space or punctuation)
+            let boundaryIdx = -1;
+            for (let i = slice.length - 1; i >= 0; i--) {
+              const ch = slice[i];
+              if (ch === ' ' || ch === '\n' || ch === '\t' || ch === '.' || ch === ',' || ch === '!' || ch === '?' || ch === ';' || ch === ':') {
+                boundaryIdx = i;
+                break;
+              }
+            }
+            sentCharsRef.current = boundaryIdx >= 0 ? (windowStart + boundaryIdx + 1) : clamp;
+
+            // Clear the UI buffer since we sent it; next STT update will rebuild delta from anchor
+            setInProgressText('');
+          }).catch(() => { });
+        }, 5000) as any;
+        return;
+      }
       console.log('[rec] prepareToRecordAsync…');
       await audioRecorder.prepareToRecordAsync();
       console.log('[rec] record()');
@@ -146,27 +296,30 @@ function RecordScreenInner() {
       if (sendTimerRef.current) try { clearInterval(sendTimerRef.current as any); } catch { }
       sendTimerRef.current = setInterval(async () => {
         console.log('[rec] tick', { isRec: recorderState.isRecording, isSending });
-        if (!recorderState.isRecording || isSending) return;
-        try {
-          console.log('[rec] stop()…');
-          await audioRecorder.stop();
-          console.log('[rec] stopped uri', audioRecorder.uri);
-          if (audioRecorder.uri) {
-            await sendChunk(audioRecorder.uri as string);
-          }
-        } catch { }
-        try {
-          console.log('[rec] re-prepare');
-          await audioRecorder.prepareToRecordAsync();
-          console.log('[rec] re-record');
-          audioRecorder.record();
-        } catch { }
+        if (isSending) return;
+        if (recorderState.isRecording) {
+          try {
+            console.log('[rec] stop()…');
+            await audioRecorder.stop();
+            console.log('[rec] stopped uri', audioRecorder.uri);
+            if (audioRecorder.uri) {
+              await sendChunk(audioRecorder.uri as string);
+            }
+          } catch { }
+        } else {
+          try {
+            console.log('[rec] re-prepare');
+            await audioRecorder.prepareToRecordAsync();
+            console.log('[rec] re-record');
+            audioRecorder.record();
+          } catch { }
+        }
       }, 5000) as any;
     } catch (e: any) {
       console.log('[rec] start error', e?.message);
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
-  }, [audioRecorder, recorderState.isRecording, isRecording, isSending, sendChunk]);
+  }, [audioRecorder, recorderState.isRecording, isRecording, isSending, sendChunk, USE_LOCAL_STT, sendText]);
 
   const stopAndFlush = useCallback(async () => {
     if (sendTimerRef.current) {
@@ -174,6 +327,22 @@ function RecordScreenInner() {
       sendTimerRef.current = null;
     }
     setIsRecording(false);
+    if (USE_LOCAL_STT) {
+      // Stop timer first
+      if (sendTimerRef.current) {
+        try { clearInterval(sendTimerRef.current as any); } catch { }
+        sendTimerRef.current = null;
+      }
+      try { await (Voice as any).stop?.(); } catch { }
+      try { await (Voice as any).destroy?.(); } catch { }
+      // Flush any remaining pending buffer (from state)
+      const finalText = inProgressText.trim();
+      if (finalText) { try { await sendText(finalText); } catch { } }
+      lastTranscriptRef.current = '';
+      sentCharsRef.current = 0;
+      setInProgressText('');
+      return;
+    }
     try {
       console.log('[rec] manual stop()');
       await audioRecorder.stop();
@@ -182,7 +351,7 @@ function RecordScreenInner() {
         await sendChunk(audioRecorder.uri as string);
       }
     } catch { }
-  }, [audioRecorder, sendChunk]);
+  }, [audioRecorder, sendChunk, USE_LOCAL_STT, sendText, inProgressText]);
 
   if (!authChecked) {
     return (
@@ -204,7 +373,7 @@ function RecordScreenInner() {
         <ThemedText type="title">Recorder</ThemedText>
         <View style={styles.statusRow}>
           {isRecording ? (
-            <ThemedText style={styles.statusRecording}>● Recording • Sends every 5s</ThemedText>
+            <ThemedText style={styles.statusRecording}>● Recording</ThemedText>
           ) : isSending ? (
             <ThemedText style={styles.statusSaving}>Saving…</ThemedText>
           ) : (
@@ -224,20 +393,10 @@ function RecordScreenInner() {
           </Pressable>
         </View>
 
-        <View style={{ marginTop: 8 }}>
-          <ThemedText type="defaultSemiBold">System feedback</ThemedText>
-          <ThemedText>Chunks sent: {chunksSent} {isSending ? '(uploading…) ' : ''}</ThemedText>
-          {lastStatus ? <ThemedText>Status: {lastStatus}</ThemedText> : null}
-        </View>
-
-        {wordsSoFar.length > 0 ? (
-          <View style={{ gap: 6 }}>
-            <ThemedText type="defaultSemiBold">Words so far</ThemedText>
-            <View style={styles.wordsWrap}>
-              {wordsSoFar.slice(-60).map((w, i) => (
-                <View key={i} style={styles.wordChip}><ThemedText>{w}</ThemedText></View>
-              ))}
-            </View>
+        {previewText ? (
+          <View style={styles.preview}>
+            <ThemedText style={styles.previewLabel}>Current transcript</ThemedText>
+            <ThemedText>{previewText}</ThemedText>
           </View>
         ) : null}
 

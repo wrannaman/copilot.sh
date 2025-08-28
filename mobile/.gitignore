@@ -42,3 +42,26 @@ app.config.js
 eas.json
 app.json
 .vscode
+
+
+# === Android ===
+android/app/build/
+android/.gradle/
+android/gradle/
+android/local.properties
+android/key.properties
+android/app/release/
+android/app/debug.keystore
+
+# === iOS ===
+ios/Pods/
+ios/build/
+ios/DerivedData/
+ios/*.xcworkspace/xcuserdata/
+ios/*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+ios/*/xcuserdata/
+*.xcuserstate
+
+# === OS / editor cruft ===
+.idea/
+*.iml

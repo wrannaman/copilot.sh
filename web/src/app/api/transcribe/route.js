@@ -38,13 +38,53 @@ function getSpeechClient() {
   return new SpeechClient()
 }
 
+// Simple dedup helper: remove overlapping prefix of `incoming` that matches
+// the suffix of `existing` (token-based, tolerant to minor punctuation/casing).
+function computeDelta(existing, incoming, options = {}) {
+  const MAX_OVERLAP_TOKENS = options.maxOverlapTokens ?? 50
+  const MIN_CONFIDENCE = options.minConfidence ?? 0.8
+
+  const normalize = (s) => String(s)
+    .toLowerCase()
+    .replace(/[\.,!?;:]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const tokenize = (s) => normalize(s).split(' ').filter(Boolean)
+  const originalTokens = (s) => String(s).trim().split(/\s+/).filter(Boolean)
+
+  const exTok = tokenize(existing)
+  const inTok = tokenize(incoming)
+  if (inTok.length === 0) return { delta: '', overlapped: 0 }
+
+  const maxK = Math.min(MAX_OVERLAP_TOKENS, exTok.length, inTok.length)
+  let overlap = 0
+  for (let k = maxK; k > 0; k--) {
+    let matches = 0
+    for (let i = 0; i < k; i++) {
+      if (exTok[exTok.length - k + i] === inTok[i]) matches++
+    }
+    const confidence = matches / k
+    if (confidence >= MIN_CONFIDENCE) {
+      overlap = k
+      break
+    }
+  }
+
+  if (overlap === 0) return { delta: incoming, overlapped: 0 }
+
+  // Build delta from original incoming tokens (preserve capitalization/punctuation spacing roughly)
+  const inOrigTok = originalTokens(incoming)
+  const deltaTokens = inOrigTok.slice(overlap)
+  const delta = deltaTokens.join(' ').trim()
+  return { delta, overlapped: overlap }
+}
+
 export async function POST(request) {
-  console.log('🚨 [transcribe] API HIT! Request received')
   try {
     // Require auth (user session via cookie, Supabase JWT, or device key)
     let supabase = await createAuthClient()
     let { data, error } = await supabase.auth.getUser()
-    console.log('🔐 [transcribe] Auth check (cookie):', { hasUser: !!data?.user, error: error?.message })
 
     let deviceMode = false
     let deviceUserId = null
@@ -65,7 +105,6 @@ export async function POST(request) {
           if (!jwtErr && jwtUser?.user) {
             data = { user: jwtUser.user }
             supabase = svc
-            console.log('🔓 [transcribe] Authenticated via Supabase JWT header')
           }
         } catch (jwtCheckErr) {
           console.warn('⚠️ [transcribe] JWT check failed, will try device key:', jwtCheckErr?.message)
@@ -119,7 +158,7 @@ export async function POST(request) {
     let transcript = ''
     if (browserTranscript) {
       transcript = browserTranscript
-      console.log('[transcribe] using browser-provided transcript', { chars: transcript.length })
+      console.log('[transcribe] given transcript: ', transcript)
     } else {
       const mimeType = form.get('mimeType') || ''
       const arrayBuffer = await file.arrayBuffer()
@@ -226,7 +265,6 @@ export async function POST(request) {
           .limit(1)
           .maybeSingle()
 
-        console.log('[transcribe] Organization lookup result:', { orgRow, orgError, userId })
 
         if (!orgRow?.organization_id) {
           console.error('[transcribe] User has no organization:', userId)
@@ -262,7 +300,7 @@ export async function POST(request) {
         .maybeSingle()
 
       if (!todaySession) {
-        console.log('[transcribe] Creating daily session for', today)
+        // console.log('[transcribe] Creating daily session for', today)
         const sessionTitle = `Conversations - ${today}`
         const { data: inserted, error: insertError } = await supabase
           .from('sessions')
@@ -281,10 +319,8 @@ export async function POST(request) {
           throw insertError
         } else {
           todaySession = inserted
-          console.log('[transcribe] Daily session created:', todaySession)
+          // console.log('[transcribe] Daily session created:', todaySession)
         }
-      } else {
-        console.log('[transcribe] Using existing daily session:', todaySession)
       }
 
       // Only save transcript if we have content
@@ -314,21 +350,25 @@ export async function POST(request) {
           console.log('[transcribe] Transcript download skipped:', downloadErr?.message)
         }
 
-        // Simple deduplication: avoid appending if the last slice already contains the new text
-        let shouldAppend = true
+        // Deduplicate: compute delta against the tail of existing text
+        let textToAppend = transcript
         if (existingText) {
-          const recentSlice = existingText.slice(-500).toLowerCase()
-          const currentText = transcript.toLowerCase()
-          if (recentSlice.includes(currentText)) {
-            console.log('🔄 [transcribe] Skipping duplicate/overlapping content in storage:', transcript)
-            shouldAppend = false
+          const tail = existingText.slice(-2000) // compare against recent tail only
+          const { delta, overlapped } = computeDelta(tail, transcript)
+          if (!delta) {
+            console.log('🔄 [transcribe] Skipping duplicate/overlapping content (full overlap)')
+            textToAppend = ''
+          } else if (overlapped > 0 && delta.length < transcript.length) {
+            console.log('✂️  [transcribe] Trimmed overlapping prefix from incoming before append', { overlappedTokens: overlapped })
+            textToAppend = delta
           }
         }
 
-        if (shouldAppend) {
+        if (textToAppend) {
           // Append as single-line entry with timestamp delimiter and no extra blank lines
           const entry = `_TIMESTAMP_${timestamp}|${transcript}\n`
-          const newText = existingText ? `${existingText}${entry}` : entry
+          const finalEntry = textToAppend === transcript ? entry : `_TIMESTAMP_${timestamp}|${textToAppend}\n`
+          const newText = existingText ? `${existingText}${finalEntry}` : finalEntry
           const buffer = Buffer.from(newText, 'utf8')
 
           const { error: uploadError } = await svc.storage
@@ -341,7 +381,7 @@ export async function POST(request) {
           if (uploadError) {
             console.error('❌ [transcribe] Failed to upload transcript to storage:', uploadError)
           } else {
-            console.log('✅ [transcribe] Appended transcript to storage file:', transcriptPath)
+            // console.log('✅ [transcribe] Appended transcript to storage file:', transcriptPath)
 
             // Update session with transcript storage path
             try {
@@ -349,7 +389,7 @@ export async function POST(request) {
                 .from('sessions')
                 .update({ transcript_storage_path: transcriptPath })
                 .eq('id', todaySession.id)
-              console.log('✅ [transcribe] Updated session with transcript path')
+              // console.log('✅ [transcribe] Updated session with transcript path')
             } catch (pathError) {
               console.warn('❌ [transcribe] Failed to update session with transcript path:', pathError)
             }
@@ -375,24 +415,27 @@ export async function POST(request) {
             }
           } catch (_) { }
 
-          const augmented = contextPrefix ? `${contextPrefix}\n${transcript}` : transcript
-          const [embedding] = await embedTexts([augmented])
+          const chunkContent = textToAppend || ''
+          if (!chunkContent) {
+            console.log('🔄 [transcribe] Skipping chunk insert due to duplicate/empty delta')
+          } else {
+            const augmented = contextPrefix ? `${contextPrefix}\n${chunkContent}` : chunkContent
+            const [embedding] = await embedTexts([augmented])
 
-          if (Array.isArray(embedding) && embedding.length > 0 && todaySession?.id) {
-            const { error: chunkError } = await supabase
-              .from('session_chunks')
-              .insert({
-                session_id: todaySession.id,
-                content: transcript, // store original content unchanged
-                start_time_seconds: null,
-                end_time_seconds: null,
-                speaker_tag: null,
-                embedding
-              })
-            if (chunkError) {
-              console.error('❌ [transcribe] Failed to insert session chunk:', chunkError)
-            } else {
-              console.log('✅ [transcribe] Inserted session chunk with context-augmented embedding')
+            if (Array.isArray(embedding) && embedding.length > 0 && todaySession?.id) {
+              const { error: chunkError } = await supabase
+                .from('session_chunks')
+                .insert({
+                  session_id: todaySession.id,
+                  content: chunkContent, // store deduped content
+                  start_time_seconds: null,
+                  end_time_seconds: null,
+                  speaker_tag: null,
+                  embedding
+                })
+              if (chunkError) {
+                console.error('❌ [transcribe] Failed to insert session chunk:', chunkError)
+              }
             }
           }
         } catch (embedErr) {
