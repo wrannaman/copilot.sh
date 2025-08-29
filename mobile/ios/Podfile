@@ -108,5 +108,18 @@ fi
         end
       end
     end
+
+    # Ensure app target can resolve React headers when building from node_modules refs
+    installer.aggregate_targets.each do |aggregate_target|
+      aggregate_target.user_project.native_targets.each do |native_target|
+        next unless native_target.name == 'copilotsh'
+        native_target.build_configurations.each do |config|
+          config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
+          existing = config.build_settings['HEADER_SEARCH_PATHS'] || '$(inherited)'
+          paths = [existing, '$(PODS_ROOT)/Headers/Public/**', '$(PODS_ROOT)/Headers/Private/**']
+          config.build_settings['HEADER_SEARCH_PATHS'] = paths
+        end
+      end
+    end
   end
 end

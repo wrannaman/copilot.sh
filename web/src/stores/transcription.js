@@ -10,7 +10,7 @@ export const useTranscriptionStore = create((set, get) => ({
   isSending: false,
   errorMessage: '',
   errorCode: null,
-  recognitionMode: 'local', // 'local' (browser) or 'remote' 
+  recognitionMode: 'remote', // 'local' (browser) or 'remote' 
   mediaStream: null,
   mediaRecorder: null,
   chunkIntervalMs: 10000,
