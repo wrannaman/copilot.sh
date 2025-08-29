@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View, ActivityIndicator } from 'react-native';
+import { Alert, Pressable, StyleSheet, View, ActivityIndicator, Switch } from 'react-native';
 import { Redirect } from 'expo-router';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
@@ -57,6 +57,16 @@ function RecordScreenInner() {
   const ROLLBACK_CHARS = 15; // small overlap to absorb STT corrections
   const MAX_TAIL_CHARS = 5000; // cap stored transcript tail to bound memory
   const lastSentTextRef = useRef<string>('');
+  const sttRestartTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const STT_HEALTH_CHECK_MS = 5000; // how often to check STT health
+  const STT_STALE_MS = 12000; // if no events/results for this long, restart STT
+  const lastSTTEventMsRef = useRef<number>(0);
+  const lastSTTResultMsRef = useRef<number>(0);
+  const cloudChunkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isNativeRecorderActiveRef = useRef<boolean>(false);
+  const nextSendAtRef = useRef<number>(0);
+  const uiTickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sendCountdownMs, setSendCountdownMs] = useState(0);
 
   function removeOverlapWords(oldText: string, newText: string, maxOverlapWords: number = 20): string {
     const oldWords = (oldText || '').trim().split(' ').filter(Boolean);
@@ -78,7 +88,7 @@ function RecordScreenInner() {
   useEffect(() => { inProgressTextRef.current = inProgressText; }, [inProgressText]);
   // Show pending buffer in UI
   const previewText = inProgressText;
-  const USE_LOCAL_STT = true;
+  const [useLocalStt, setUseLocalStt] = useState(false); // default to cloud
 
   const audioRecorder = useAudioRecorder({
     extension: '.wav',
@@ -117,15 +127,46 @@ function RecordScreenInner() {
         try { clearInterval(sendTimerRef.current as any); } catch { }
         sendTimerRef.current = null;
       }
+      if (sttRestartTimerRef.current) {
+        try { clearInterval(sttRestartTimerRef.current as any); } catch { }
+        sttRestartTimerRef.current = null;
+      }
+      if (cloudChunkTimeoutRef.current) {
+        try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
+        cloudChunkTimeoutRef.current = null;
+      }
       setIsRecording(false);
-      if (USE_LOCAL_STT) {
+      if (useLocalStt) {
         try { await (Voice as any).stop?.(); } catch { }
         try { await (Voice as any).destroy?.(); } catch { }
       } else {
         try { await audioRecorder.stop(); } catch { }
+        isNativeRecorderActiveRef.current = false;
       }
     } catch { }
-  }, [USE_LOCAL_STT, audioRecorder]);
+  }, [useLocalStt, audioRecorder]);
+
+  const restartLocalSTT = useCallback(async () => {
+    if (!useLocalStt) return;
+    if (!isRecordingRef.current) return;
+    try {
+      console.log('[stt] restarting Voice engine…');
+      try { await (Voice as any).cancel?.(); } catch { }
+      try { await (Voice as any).stop?.(); } catch { }
+      // Small delay to let the engine settle before starting again
+      await new Promise((r) => setTimeout(r, 150));
+      // Reset local transcript baseline so we don't accumulate across sessions
+      lastTranscriptRef.current = '';
+      sentCharsRef.current = 0;
+      inProgressTextRef.current = '';
+      setInProgressText('');
+      await (Voice as any).start?.('en-US');
+      const now = Date.now();
+      lastSTTEventMsRef.current = now;
+    } catch (e: any) {
+      console.log('[stt] restart failed', e?.message);
+    }
+  }, [useLocalStt]);
 
   const sendChunk = useCallback(async (uri: string) => {
     try {
@@ -186,11 +227,9 @@ function RecordScreenInner() {
       const supabase = getSupabase();
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token || '';
-      console.log("🚀 ~ accessToken:", accessToken)
       const form = new FormData();
       form.append('mode', 'browser');
       form.append('text', textToSend);
-      console.log("🚀 ~ `${apiBaseUrl}/api/transcribe`:", `${apiBaseUrl}/api/transcribe`)
       const sending = {
         method: 'POST',
         headers: {
@@ -198,9 +237,7 @@ function RecordScreenInner() {
         },
         body: form as any,
       }
-      console.log("🚀 ~ sending:", sending)
       const res = await fetch(`${apiBaseUrl}/api/transcribe`, sending);
-      console.log('req headers', res.headers);
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 || data?.message === 'Unauthorized') {
         await stopRecordingImmediately();
@@ -234,10 +271,10 @@ function RecordScreenInner() {
         return Alert.alert('Microphone denied');
       }
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
-      if (USE_LOCAL_STT) {
+      if (useLocalStt) {
         try { (Voice as any)?.removeAllListeners?.(); } catch { }
         try { await (Voice as any)?.requestPermissions?.(); } catch { }
-        Voice.onSpeechStart = () => { console.log('[stt] onSpeechStart'); };
+        Voice.onSpeechStart = () => { console.log('[stt] onSpeechStart'); lastSTTEventMsRef.current = Date.now(); };
         const handleTranscriptUpdate = (newFullText: string) => {
           // Only update if the text has actually changed
           if (newFullText === lastTranscriptRef.current) return;
@@ -251,25 +288,37 @@ function RecordScreenInner() {
           setInProgressText(delta);
         };
 
-        Voice.onSpeechPartialResults = (e: any) => {
-          const parts: string[] = e?.value || [];
-          if (parts && parts.length) {
-            const text = (parts[0] || '').trim();
-            handleTranscriptUpdate(text);
-          }
-        };
+        Voice.onSpeechEnd = (e: any) => {
+          console.log("🚀 ~ onSpeechEnd:", e)
+          lastSTTEventMsRef.current = Date.now();
+        }
+
+        // Voice.onSpeechPartialResults = (e: any) => {
+        //   const parts: string[] = e?.value || [];
+        //   console.log("🚀 ~ onSpeechPartialResults:", parts)
+        //   if (parts && parts.length) {
+        //     const text = (parts[0] || '').trim();
+        //     handleTranscriptUpdate(text);
+        //   }
+        // };
         Voice.onSpeechResults = (e: any) => {
           const lines: string[] = e?.value || [];
           const text = (lines[0] || '').trim();
+          console.log("🚀 ~ text:", text)
           if (text) {
-            console.log('[stt] final result:', text);
             handleTranscriptUpdate(text);
           }
+          const now = Date.now();
+          lastSTTEventMsRef.current = now;
+          lastSTTResultMsRef.current = now;
         };
         Voice.onSpeechError = (e: any) => {
           console.log('[stt] error:', e);
+          lastSTTEventMsRef.current = Date.now();
         };
         await (Voice as any).start?.('en-US');
+        const now = Date.now();
+        lastSTTEventMsRef.current = now;
         lastTranscriptRef.current = '';
         setIsRecording(true);
         // Start periodic text send
@@ -286,6 +335,8 @@ function RecordScreenInner() {
 
           const textToSend = pruned;
           console.log('[timer] sending buffer:', textToSend.slice(0, 50) + '...');
+          // schedule next send ETA for countdown
+          nextSendAtRef.current = Date.now() + 5000;
           sendText(textToSend).then(sent => {
             if (!sent) return;
 
@@ -326,48 +377,114 @@ function RecordScreenInner() {
             setInProgressText('');
           }).catch(() => { });
         }, 5000) as any;
+        // STT health check: restart if no events/results for a while (stuck)
+        if (sttRestartTimerRef.current) try { clearInterval(sttRestartTimerRef.current as any); } catch { }
+        sttRestartTimerRef.current = setInterval(() => {
+          const now = Date.now();
+          const last = Math.max(lastSTTEventMsRef.current || 0, lastSTTResultMsRef.current || 0);
+          if (!last || now - last > STT_STALE_MS) {
+            restartLocalSTT();
+          }
+        }, STT_HEALTH_CHECK_MS) as any;
+        // UI ticker for countdown
+        if (uiTickerRef.current) try { clearInterval(uiTickerRef.current as any); } catch { }
+        uiTickerRef.current = setInterval(() => {
+          if (!isRecordingRef.current) return;
+          const remaining = Math.max(0, (nextSendAtRef.current || 0) - Date.now());
+          setSendCountdownMs(remaining);
+        }, 200) as any;
         return;
       }
-      console.log('[rec] prepareToRecordAsync…');
-      await audioRecorder.prepareToRecordAsync();
-      console.log('[rec] record()');
-      audioRecorder.record();
-      setIsRecording(true);
-      if (sendTimerRef.current) try { clearInterval(sendTimerRef.current as any); } catch { }
-      sendTimerRef.current = setInterval(async () => {
-        console.log('[rec] tick', { isRec: recorderState.isRecording, isSending });
-        if (isSending) return;
-        if (recorderState.isRecording) {
-          try {
-            console.log('[rec] stop()…');
-            await audioRecorder.stop();
-            console.log('[rec] stopped uri', audioRecorder.uri);
-            if (audioRecorder.uri) {
-              await sendChunk(audioRecorder.uri as string);
-            }
-          } catch { }
-        } else {
-          try {
-            console.log('[rec] re-prepare');
-            await audioRecorder.prepareToRecordAsync();
-            console.log('[rec] re-record');
-            audioRecorder.record();
-          } catch { }
+      // Cloud mode: drive explicit 5s chunks using a simple stop→send→restart loop
+      const getRecordingUri = (): string | null => {
+        const rAny: any = audioRecorder as any;
+        const direct = (audioRecorder as any)?.uri || rAny?.url || (recorderState as any)?.url;
+        return typeof direct === 'string' && direct.length > 0 ? direct : null;
+      };
+
+      const startChunk = async () => {
+        try {
+          console.log('[rec] prepareToRecordAsync…');
+          await audioRecorder.prepareToRecordAsync();
+          console.log('[rec] record()');
+          audioRecorder.record();
+          isNativeRecorderActiveRef.current = true;
+        } catch (e: any) {
+          console.log('[rec] startChunk error', e?.message);
         }
-      }, 5000) as any;
+      };
+
+      const stopAndSendChunk = async () => {
+        try {
+          console.log('[rec] stop()…');
+          await audioRecorder.stop();
+          isNativeRecorderActiveRef.current = false;
+          const uri = getRecordingUri();
+          console.log('[rec] stopped uri', uri);
+          // Immediately restart recording to minimize dropped audio
+          await startChunk();
+          // Now send previous chunk without blocking schedule
+          if (uri) {
+            sendChunk(uri).catch(() => { });
+          } else {
+            console.log('[rec] no uri after stop');
+          }
+        } catch (e: any) {
+          console.log('[rec] stopAndSendChunk error', e?.message);
+        }
+      };
+
+      const driveLoop = async () => {
+        if (!isRecordingRef.current) return;
+        if (!isNativeRecorderActiveRef.current) {
+          await startChunk();
+        } else {
+          await stopAndSendChunk();
+        }
+        if (!isRecordingRef.current) return;
+        nextSendAtRef.current = Date.now() + 5000;
+        cloudChunkTimeoutRef.current = setTimeout(driveLoop, 5000) as any;
+      };
+
+      setIsRecording(true);
+      // kick off
+      await startChunk();
+      nextSendAtRef.current = Date.now() + 5000;
+      cloudChunkTimeoutRef.current = setTimeout(driveLoop, 5000) as any;
+      // UI ticker for countdown
+      if (uiTickerRef.current) try { clearInterval(uiTickerRef.current as any); } catch { }
+      uiTickerRef.current = setInterval(() => {
+        if (!isRecordingRef.current) return;
+        const remaining = Math.max(0, (nextSendAtRef.current || 0) - Date.now());
+        setSendCountdownMs(remaining);
+      }, 200) as any;
     } catch (e: any) {
       console.log('[rec] start error', e?.message);
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
-  }, [audioRecorder, recorderState.isRecording, isRecording, isSending, sendChunk, USE_LOCAL_STT, sendText]);
+  }, [audioRecorder, recorderState, isRecording, sendChunk, useLocalStt, sendText, restartLocalSTT]);
 
   const stopAndFlush = useCallback(async () => {
     if (sendTimerRef.current) {
       try { clearInterval(sendTimerRef.current as any); } catch { }
       sendTimerRef.current = null;
     }
+    if (sttRestartTimerRef.current) {
+      try { clearInterval(sttRestartTimerRef.current as any); } catch { }
+      sttRestartTimerRef.current = null;
+    }
+    if (cloudChunkTimeoutRef.current) {
+      try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
+      cloudChunkTimeoutRef.current = null;
+    }
+    if (uiTickerRef.current) {
+      try { clearInterval(uiTickerRef.current as any); } catch { }
+      uiTickerRef.current = null;
+    }
+    nextSendAtRef.current = 0;
+    setSendCountdownMs(0);
     setIsRecording(false);
-    if (USE_LOCAL_STT) {
+    if (useLocalStt) {
       // Stop timer first
       if (sendTimerRef.current) {
         try { clearInterval(sendTimerRef.current as any); } catch { }
@@ -387,11 +504,13 @@ function RecordScreenInner() {
       console.log('[rec] manual stop()');
       await audioRecorder.stop();
       console.log('[rec] stopped uri', audioRecorder.uri);
-      if (audioRecorder.uri) {
-        await sendChunk(audioRecorder.uri as string);
+      const rAny: any = audioRecorder as any;
+      const uri = (audioRecorder as any)?.uri || rAny?.url || (recorderState as any)?.url;
+      if (uri) {
+        await sendChunk(uri as string);
       }
     } catch { }
-  }, [audioRecorder, sendChunk, USE_LOCAL_STT, sendText, inProgressText]);
+  }, [audioRecorder, recorderState, sendChunk, useLocalStt, sendText, inProgressText]);
 
   const onReset = useCallback(() => {
     try { (Voice as any)?.removeAllListeners?.(); } catch { }
@@ -402,6 +521,10 @@ function RecordScreenInner() {
     lastTranscriptRef.current = '';
     lastSentTextRef.current = '';
     sentCharsRef.current = 0;
+    if (sttRestartTimerRef.current) {
+      try { clearInterval(sttRestartTimerRef.current as any); } catch { }
+      sttRestartTimerRef.current = null;
+    }
     console.log('[reset] cleared recent transcripts and STT buffers');
   }, []);
 
@@ -423,36 +546,46 @@ function RecordScreenInner() {
     >
       <ThemedView style={styles.container}>
         <ThemedText type="title">Recorder</ThemedText>
-        <View style={styles.statusRow}>
+        <View style={styles.centerControls}>
+          <Pressable
+            onPress={isRecording ? stopAndFlush : startRecording}
+            style={[styles.micButton, styles.micLarge, isRecording ? styles.micStop : styles.micStart]}
+            accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            {isRecording ? (
+              <Ionicons name="stop" size={36} color="#ffffff" />
+            ) : (
+              <Ionicons name="mic" size={36} color="#ffffff" />
+            )}
+          </Pressable>
           {isRecording ? (
-            <ThemedText style={styles.statusRecording}>● Recording</ThemedText>
+            <ThemedText style={[styles.statusRecording, styles.statusCentered]}>● Recording</ThemedText>
           ) : isSending ? (
-            <ThemedText style={styles.statusSaving}>Saving…</ThemedText>
+            <ThemedText style={[styles.statusSaving, styles.statusCentered]}>Saving…</ThemedText>
           ) : (
-            <ThemedText style={styles.statusIdle}>Idle</ThemedText>
+            <ThemedText style={[styles.statusIdle, styles.statusCentered]}>Idle</ThemedText>
           )}
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Pressable
-              onPress={onReset}
-              style={styles.resetButton}
-              accessibilityLabel={'Reset buffers'}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="refresh" size={20} color="#374151" />
-            </Pressable>
-            <Pressable
-              onPress={isRecording ? stopAndFlush : startRecording}
-              style={[styles.micButton, isRecording ? styles.micStop : styles.micStart]}
-              accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              {isRecording ? (
-                <Ionicons name="stop" size={32} color="#ffffff" />
-              ) : (
-                <Ionicons name="mic" size={32} color="#ffffff" />
-              )}
-            </Pressable>
+          {isRecording ? (
+            <ThemedText style={styles.countdownText}>
+              Next send in {Math.ceil(sendCountdownMs / 100) / 10}s
+            </ThemedText>
+          ) : null}
+        </View>
+
+        <View style={styles.toolbarRow}>
+          <View style={[styles.toggleGroup, { opacity: isRecording ? 0.6 : 1 }]}>
+            <ThemedText style={{ marginRight: 6 }}>Local STT</ThemedText>
+            <Switch value={useLocalStt} onValueChange={setUseLocalStt} disabled={isRecording} />
           </View>
+          <Pressable
+            onPress={onReset}
+            style={styles.resetButton}
+            accessibilityLabel={'Reset buffers'}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="refresh" size={20} color="#374151" />
+          </Pressable>
         </View>
 
         {previewText ? (
@@ -499,12 +632,21 @@ const styles = StyleSheet.create({
     color: '#059669',
     fontWeight: '600',
   },
+  statusCentered: {
+    textAlign: 'center',
+    marginTop: 8,
+  },
   micButton: {
     height: 72,
     width: 72,
     borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  micLarge: {
+    height: 96,
+    width: 96,
+    borderRadius: 48,
   },
   micPressed: {
     opacity: 0.9,
@@ -514,6 +656,25 @@ const styles = StyleSheet.create({
   },
   micStop: {
     backgroundColor: '#dc2626',
+  },
+  centerControls: {
+    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolbarRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toggleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  countdownText: {
+    color: '#6b7280',
+    marginTop: 4,
   },
   resetButton: {
     height: 40,

@@ -1,86 +1,64 @@
-
 # copilot.sh
 
 > Humane Pin raised $200M. This is the open-source version you actually own.  
-> 🪩 Always-on AI memory for work + life.
+> 🪩 Always-on AI memory + agents for work + life.
 
 ---
 
 ## What is copilot.sh?
 
-This is a mono repo with mobile, web, and embedded device  (raspberry pi)
+**copilot.sh** is an **open-source ambient AI recorder and agent platform.**  
+It captures everything → organizes with calendar context → lets you build agents that act on your data.
 
-**copilot.sh** is an **open-source ambient AI recorder**.  
-Capture conversations → tag with Google Calendar → filter with custom prompts → push to Notion/Docs → search everything later. Uses nextjs as a front end and supabase backend.
+- 🟢 **Runs anywhere**: browser, laptop, Raspberry Pi ($40 puck)  
+- 🔒 **Private**: data stays with you, not us  
+- 🛠 **Hackable**: bring your own LLM, extend with MCP plugins  
+- ⚡ **Agentic**: create workflows that summarize, remind, email, or push to Notion/Docs  
 
-- 🟢 Runs anywhere: browser, laptop, Raspberry Pi ($40 puck)  
-- 🔒 Privacy: data stays with you, not us  
-- 🛠 Hackable: bring your own LLM, extend with MCP plugins  
-- 🌍 Community-driven: GitHub stars = roadmap  
+---
 
-### ✨ Features
-- 🎙️ **Record in browser** (or run on a Raspberry Pi puck)  
-- 📅 **Calendar context** → sessions linked to your Google events  
-- 🧹 **Prompt filters** → structure transcripts into summaries, todos, commitments  
-- 🗂️ **Push outputs** → Notion or Google Docs  
-- 🔍 **RAG search** → semantic + keyword recall across your life, filtered by calendar  
+## ✨ Features
+
+- 🎙️ **Record in browser** (or run 24/7 on a Raspberry Pi puck)  
+- 📅 **Calendar context** → sessions auto-tagged to Google events  
+- 🧩 **Agents** → e.g. “Every evening, digest my day and email me a summary”  
+- 🗂️ **Integrations** → Notion, Google Docs, Gmail (more coming)  
+- 🔍 **Semantic Search** → “what did I promise in the last QBR?”  
 - 🔌 **MCP server** → query your memory from inside ChatGPT  
+
+---
 
 ## License
 
-Copilot.sh is source-available under the **Business Source License 1.1 (BUSL)**.  
-- ✅ Free for personal and self-hosted use.  
-- ❌ Not allowed to sell or host as a paid service without a commercial license.  
-- 🔓 Each release converts to Apache 2.0 after 4 years.  
+Source-available under **BUSL 1.1**:  
+- ✅ Free for personal + self-hosted use.  
+- ❌ No hosting/resale as SaaS without license.  
+- 🔓 Converts to Apache 2.0 after 4 years.  
 
-See [LICENSE.md](./LICENSE.md) for details.
-
+See [LICENSE.md](./LICENSE.md).
 
 ---
 
 ## Why?
 
-Most “AI memory” tools are closed, expensive, or creepy.  
-- Otter/Granola → only work on Zoom/Meet.  
-- Rewind → Mac-only, closed.  
-- Humane Pin → $699 + subscription.  
+Most “AI memory” tools are **closed, expensive, or creepy**:  
+- Otter/Granola → meeting bots only  
+- Rewind → Mac-only, closed  
+- Humane Pin → $699 + subscription  
 
 **copilot.sh** is:  
 - 🔓 Open source  
-- 💸 Free to run yourself  
-- 🖥️ Hackable → runs on a Pi, browser, or your own infra  
-- 🔒 Privacy first → you own the data  
+- 💸 Free to run  
+- 🖥️ Hackable (Pi, browser, or infra)  
+- 🔒 Private — you own the data  
 
 ---
 
 ## Quick Start
 
-### 1. Clone + Install Web
+### Web
 
 ```bash
 cd web
 cp .env.example .env
-# create a google service account and download the credentials.json file into ./credentials/google.json
-```
-
-.env.example has the variables you need to set.
-
-```bash
-npm i && npm run dev 
-```
-
-
-This app uses two Google credentials: a service account for transcription and an OAuth Web Client for per‑user Calendar; see `env.example` for all required variables.
-
-
-
-### Google service account 
-- Go to Google Cloud Console -> IAM & Admin -> Service Accounts 
-  1. Create service account 
-  2. Create key with Cloud Speech Client role 
-  3. Skip permissions 
-  4. Download the JSON file and put it in ./credentials/google-service-account.json
-
-## Disclaimer
-
-Copilot.sh records audio. Please use responsibly and comply with local laws around recording conversations.
+npm i && npm run dev
