@@ -18,6 +18,7 @@ export function AuthenticatedNav() {
   const navLinks = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/record", label: "Record" },
+    { href: "/sessions", label: "Sessions" },
     { href: "/integrations", label: "Integrations" },
     { href: "/team", label: "Team" },
   ];

@@ -5,34 +5,92 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 function sniffExt(mime, bytes) {
+  console.log('[sniffExt] input', { mime, bytesLength: bytes?.length })
   try {
-    const sig4 = Buffer.from(bytes).subarray(0, 4)
-    const ascii = (() => { try { return sig4.toString('utf8') } catch { return '' } })()
-    const isOgg = ascii === 'OggS' || String(mime).includes('ogg')
-    const isWebm = sig4.equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) || String(mime).includes('webm')
-    if (isOgg) return 'ogg'
-    if (isWebm) return 'webm'
-  } catch { }
-  return 'bin'
-}
+    const buf = Buffer.from(bytes)
+    const sig4 = buf.subarray(0, 4)
+    const sig12 = buf.subarray(0, 12)
+    const ascii4 = (() => { try { return sig4.toString('utf8') } catch { return '' } })()
+    const ascii12 = (() => { try { return sig12.toString('utf8') } catch { return '' } })()
 
-function getSpeechClient() {
-  const { SpeechClient } = require('@google-cloud/speech')
-  const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS || ''
-  if (gac.trim().startsWith('{')) {
-    try {
-      const json = JSON.parse(gac)
-      const projectId = json.project_id || process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT
-      if (!json.client_email || !json.private_key) {
-        throw new Error('Missing client_email or private_key in GOOGLE_APPLICATION_CREDENTIALS JSON')
-      }
-      return new SpeechClient({ projectId, credentials: { client_email: json.client_email, private_key: json.private_key } })
-    } catch (e) {
-      console.error('[speech] Failed to parse GOOGLE_APPLICATION_CREDENTIALS as JSON:', e?.message)
-      throw e
+    const m = String(mime).toLowerCase()
+    console.log('[sniffExt] normalized mime', { original: mime, normalized: m })
+
+    // Check mime type first for common audio formats
+    if (m.includes('ogg')) {
+      console.log('[sniffExt] matched ogg via mime')
+      return 'ogg'
     }
+    if (m.includes('webm')) {
+      console.log('[sniffExt] matched webm via mime')
+      return 'webm'
+    }
+    if (m.includes('m4a') || m.includes('mp4') || m.includes('aac') || m === 'audio/x-m4a') {
+      console.log('[sniffExt] matched m4a via mime', { includes_m4a: m.includes('m4a'), includes_mp4: m.includes('mp4'), includes_aac: m.includes('aac'), exact_match: m === 'audio/x-m4a' })
+      return 'm4a'
+    }
+    if (m.includes('wav')) {
+      console.log('[sniffExt] matched wav via mime')
+      return 'wav'
+    }
+    if (m.includes('flac')) {
+      console.log('[sniffExt] matched flac via mime')
+      return 'flac'
+    }
+    if (m.includes('mp3')) {
+      console.log('[sniffExt] matched mp3 via mime')
+      return 'mp3'
+    }
+    // audio/mpeg is ambiguous - let binary detection decide
+
+    console.log('[sniffExt] no mime match, trying binary detection', { ascii4, ascii12, sig4_hex: sig4.toString('hex') })
+
+    // Fallback to binary signature detection
+    // OGG
+    if (ascii4 === 'OggS') {
+      console.log('[sniffExt] matched ogg via binary')
+      return 'ogg'
+    }
+
+    // WEBM / Matroska
+    if (sig4.equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) {
+      console.log('[sniffExt] matched webm via binary')
+      return 'webm'
+    }
+
+    // M4A / MP4-based
+    // Typical MP4/M4A starts with 4-byte length then 'ftyp' brand
+    if (ascii12.includes('ftyp')) {
+      console.log('[sniffExt] matched m4a via binary ftyp')
+      return 'm4a'
+    }
+
+    // WAV
+    // 'RIFF'....'WAVE'
+    const ascii12b = ascii12
+    if (ascii4 === 'RIFF' && ascii12b.includes('WAVE')) {
+      console.log('[sniffExt] matched wav via binary')
+      return 'wav'
+    }
+
+    // FLAC
+    if (ascii4 === 'fLaC') {
+      console.log('[sniffExt] matched flac via binary')
+      return 'flac'
+    }
+
+    // MP3
+    if (sig4[0] === 0xFF && (sig4[1] & 0xE0) === 0xE0) {
+      console.log('[sniffExt] matched mp3 via binary')
+      return 'mp3'
+    }
+
+    console.log('[sniffExt] no matches, falling back to bin')
+  } catch (e) {
+    console.log('[sniffExt] error', e?.message)
   }
-  return new SpeechClient()
+  // Fallback - should rarely happen with proper mime types
+  return 'bin'
 }
 
 export async function POST(request, { params }) {
@@ -118,6 +176,7 @@ export async function POST(request, { params }) {
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
     const ext = sniffExt(mimeType, buffer)
+    console.log('[chunk] extension detection', { mimeType, detectedExt: ext, bufferStart: buffer.subarray(0, 16).toString('hex') })
 
     const svc = createServiceClient()
     const partName = `${String(seq).padStart(6, '0')}.${ext}`

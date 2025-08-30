@@ -29,7 +29,7 @@ async function loadCombinedOrConcat(bucket, organizationId, sessionId) {
   console.log('[audio] list dir', { bucket, prefixDir })
   const files = await listFiles(bucket, prefixDir)
   const parts = (files || [])
-    .filter(f => /(\.webm|\.ogg|\.m4a)$/i.test(f.name))
+    .filter(f => /(\.webm|\.ogg|\.m4a|\.wav|\.flac|\.bin)$/i.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name))
   console.log('[audio] parts', { count: parts.length, names: parts.map(p => p.name) })
 
@@ -59,8 +59,10 @@ async function loadCombinedOrConcat(bucket, organizationId, sessionId) {
   }
 
   // Fallback: single combined in storage → transcode to WAV
-  for (const ext of ['ogg', 'webm', 'm4a', 'wav', 'flac']) {
+  // Try both locations: audio/org/session.ext (new) and audio/org/session/session.ext (legacy)
+  for (const ext of ['ogg', 'webm', 'm4a', 'wav', 'flac', 'bin', 'mp3']) {
     try {
+      // First try the combined file location (where single uploads go)
       const storagePath = `audio/${organizationId}/${sessionId}.${ext}`
       const buf = await downloadFile(bucket, storagePath)
       if (buf && buf.length > 0) {
@@ -77,12 +79,31 @@ async function loadCombinedOrConcat(bucket, organizationId, sessionId) {
         return { buffer: wavBuf, isChunked: false, chunkCount: 1 }
       }
     } catch { }
+
+    try {
+      // Also try legacy chunked-session location in case it's stored there
+      const legacyPath = `${prefixDir}/${sessionId}.${ext}`
+      const buf = await downloadFile(bucket, legacyPath)
+      if (buf && buf.length > 0) {
+        console.log('[audio] found legacy combined', { legacyPath, bytes: buf.length })
+        const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `copilot-legacy-${sessionId}-`))
+        const inFile = path.join(tmpDir, `in.${ext}`)
+        const outWav = path.join(tmpDir, `${sessionId}.wav`)
+        await fs.writeFile(inFile, buf)
+        await execFile(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', inFile, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outWav])
+        const wavBuf = await fs.readFile(outWav)
+        const dbgOut = path.join(dbgDir, `${sessionId}.combined.wav`)
+        await fs.writeFile(dbgOut, wavBuf).catch(() => { })
+        console.log('[audio] wrote debug combined wav (legacy)', { dbgOut, bytes: wavBuf.length })
+        return { buffer: wavBuf, isChunked: false, chunkCount: 1 }
+      }
+    } catch { }
   }
 
   throw new Error('no audio')
 }
 
-async function transcribeWhole(buffer, gcsUri = null) {
+async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
   const speech = getSpeechClient()
 
   // Determine if we should use GCS URI or inline audio
@@ -104,18 +125,70 @@ async function transcribeWhole(buffer, gcsUri = null) {
     },
     audio: audioConfig
   })
-  const [resp] = await op.promise()
+
+  const operationName = op.name
+  console.log('[transcribe] Long-running operation started', { operationName })
+
+  // Immediately call the callback with the operation name so it can be saved
+  if (onOperationStart) {
+    try {
+      await onOperationStart(operationName)
+    } catch (callbackError) {
+      console.error('[transcribe] Callback error:', callbackError?.message)
+      // Continue transcription even if callback fails
+    }
+  }
+
+
+  const startTime = Date.now()
+
+  // Add periodic progress logging
+  const progressInterval = setInterval(() => {
+    const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1)
+    console.log(`[transcribe] Still processing... ${elapsed} minutes elapsed`)
+  }, 60000) // Log every minute
+
+  let resp
+  try {
+    [resp] = await op.promise()
+    clearInterval(progressInterval)
+    const totalTime = ((Date.now() - startTime) / 1000 / 60).toFixed(1)
+    console.log(`[transcribe] Completed after ${totalTime} minutes`)
+  } catch (error) {
+    clearInterval(progressInterval)
+    throw error
+  }
+
   console.log('transcribeWhole ~ resp:', resp)
-  const results = resp?.results || []
-  console.log('transcribeWhole ~ results:', JSON.stringify(results, null, 2))
+
+  // Handle different response structures from Google Speech API
+  let results = []
+  if (resp?.results) {
+    results = resp.results
+  } else if (resp?.value?.results) {
+    results = resp.value.results
+  } else if (Array.isArray(resp)) {
+    results = resp
+  } else {
+    console.log('transcribeWhole ~ Unexpected response structure:', JSON.stringify(resp, null, 2))
+    results = []
+  }
+
+  console.log('transcribeWhole ~ results array length:', results.length)
+  if (results.length > 0) {
+    console.log('transcribeWhole ~ first result sample:', JSON.stringify(results[0], null, 2))
+  }
 
   const text = results.map(r => r.alternatives?.[0]?.transcript || '').filter(Boolean).join(' ').trim()
+  console.log('transcribeWhole ~ extracted text length:', text.length)
+  console.log('transcribeWhole ~ text preview:', text.substring(0, 200) + '...')
 
   return {
     text,
     results,
     totalBilledTime: resp?.totalBilledTime,
-    requestId: resp?.requestId
+    requestId: resp?.requestId,
+    operationName
   }
 }
 

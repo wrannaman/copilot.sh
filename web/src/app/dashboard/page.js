@@ -15,7 +15,6 @@ import {
   Mic,
   Search,
   Settings,
-  BarChart3,
   Zap,
   Upload,
   Loader2
@@ -24,12 +23,12 @@ import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 import { SearchComponent } from '@/components/search/search';
 // Removed inline GoogleCalendarCard from dashboard; use dedicated Integrations page
 import QuickActions from '@/components/dashboard/QuickActions'
-import SessionsPanel from '@/components/dashboard/SessionsPanel'
+
 import TextIngestCard from '@/components/dashboard/TextIngestCard'
 
 function DashboardContent() {
   const { user, currentOrganization } = useAuth();
-  const [activeTab, setActiveTab] = useState('search'); // search, analytics
+
 
   // Upload modal state
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -91,18 +90,41 @@ function DashboardContent() {
       });
       if (!fin.ok) throw new Error(`finalize failed ${fin.status}`);
 
-      // Success!
+      // Success! But transcription is still processing
       setUploadSuccess(true);
-      setUploadStatus("✅ Upload successful! Audio has been transcribed and is ready to search.");
+      setUploadStatus("✅ Upload successful! Processing and transcribing audio...");
 
-      // Auto-close after showing success for a moment
-      setTimeout(() => {
-        setUploadTitle("");
-        setUploadSummaryPrompt("");
-        setUploadStatus("");
-        setUploadSuccess(false);
-        setUploadOpen(false);
-      }, 2000);
+      // Poll session status to show when actually ready
+      const pollStatus = async () => {
+        try {
+          const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.status === 'ready') {
+              setUploadStatus("✅ Audio transcribed and ready to search!");
+              setTimeout(() => {
+                setUploadTitle("");
+                setUploadSummaryPrompt("");
+                setUploadStatus("");
+                setUploadSuccess(false);
+                setUploadOpen(false);
+              }, 2000);
+              return;
+            } else if (statusData.status === 'error') {
+              setUploadStatus("❌ Transcription failed. Please try again.");
+              setUploadSuccess(false);
+              return;
+            }
+          }
+          // Continue polling if still processing
+          setTimeout(pollStatus, 2000);
+        } catch (e) {
+          console.warn('Status polling failed:', e);
+          setTimeout(pollStatus, 3000);
+        }
+      };
+
+      setTimeout(pollStatus, 1000);
 
     } catch (e) {
       console.warn('upload failed', e);
@@ -227,10 +249,10 @@ function DashboardContent() {
                       {/* Status Messages */}
                       {uploadStatus && (
                         <div className={`p-3 rounded-lg text-sm ${uploadSuccess
-                          ? 'bg-green-50 border border-green-200 text-green-800'
+                          ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
                           : uploading
-                            ? 'bg-blue-50 border border-blue-200 text-blue-800'
-                            : 'bg-red-50 border border-red-200 text-red-800'
+                            ? 'bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+                            : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
                           }`}>
                           <div className="flex items-center gap-2">
                             {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -282,72 +304,20 @@ function DashboardContent() {
 
           {/* Metrics removed for simplicity */}
 
-          {/* Tab Navigation */}
-          <div className="flex items-center gap-2 mb-6">
-            {[
-              { id: 'search', label: 'Search', icon: Search },
-              { id: 'sessions', label: 'Sessions', icon: Mic },
-              { id: 'analytics', label: 'Analytics', icon: BarChart3 }
-            ].map(({ id, label, icon: Icon }) => (
-              <Button
-                key={id}
-                variant={activeTab === id ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setActiveTab(id)}
-                className="flex items-center gap-2"
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </Button>
-            ))}
-          </div>
+
 
           {/* Main Content */}
-          {activeTab === 'search' && (
-            <div className="space-y-6">
-              <SearchComponent />
+          <div className="space-y-6">
+            <SearchComponent />
 
-              {/* Quick Actions */}
-              <div className="w-full max-w-4xl mx-auto">
-                <QuickActions />
-              </div>
 
-              {/* Text Ingest */}
-              <div className="w-full max-w-4xl mx-auto">
-                <TextIngestCard />
-              </div>
+
+            {/* Text Ingest */}
+            <div className="w-full max-w-4xl mx-auto">
+              <TextIngestCard />
             </div>
-          )}
+          </div>
 
-          {activeTab === 'sessions' && (
-            <div className="space-y-6">
-              <div className="w-full max-w-6xl mx-auto">
-                <SessionsPanel organizationId={currentOrganization?.org_id} />
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'analytics' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Analytics</CardTitle>
-                <CardDescription>
-                  Usage patterns and insights
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="text-center py-8">
-                <BarChart3 className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <h3 className="font-medium mb-2">Analytics Coming Soon</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Track your conversation patterns, most discussed topics, and productivity insights.
-                </p>
-                <Button variant="outline" disabled>
-                  <Zap className="h-4 w-4 mr-2" />
-                  Enable Analytics
-                </Button>
-              </CardContent>
-            </Card>
-          )}
 
         </div>
       </main>

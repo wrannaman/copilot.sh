@@ -7,6 +7,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { RotateCcw, Loader2 } from "lucide-react";
 
 export default function SessionsPanel({ organizationId }) {
   const [sessions, setSessions] = useState([]);
@@ -15,6 +16,7 @@ export default function SessionsPanel({ organizationId }) {
   const [selectedSession, setSelectedSession] = useState(null);
   const [transcriptText, setTranscriptText] = useState("");
   const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [retryingSession, setRetryingSession] = useState(null);
 
   useEffect(() => {
     async function loadSessions() {
@@ -76,6 +78,72 @@ export default function SessionsPanel({ organizationId }) {
     } catch { }
   }
 
+  async function retrySession(sessionId) {
+    setRetryingSession(sessionId);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/finalize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        // Update the session status to 'uploaded' (processing)
+        setSessions(prevSessions =>
+          prevSessions.map(session =>
+            session.id === sessionId
+              ? { ...session, status: 'uploaded' }
+              : session
+          )
+        );
+
+        // Poll for status updates
+        pollSessionStatus(sessionId);
+      } else {
+        console.error('Failed to retry session:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Error retrying session:', error);
+    } finally {
+      setRetryingSession(null);
+    }
+  }
+
+  async function pollSessionStatus(sessionId) {
+    const maxAttempts = 30; // Poll for up to 1 minute
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/status`);
+        if (response.ok) {
+          const data = await response.json();
+
+          setSessions(prevSessions =>
+            prevSessions.map(session =>
+              session.id === sessionId
+                ? { ...session, status: data.status }
+                : session
+            )
+          );
+
+          // Continue polling if still processing
+          if (data.status === 'uploaded' || data.status === 'transcribing') {
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(poll, 2000);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error polling session status:', error);
+      }
+    };
+
+    setTimeout(poll, 1000);
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -109,7 +177,24 @@ export default function SessionsPanel({ organizationId }) {
                     <TableCell>{new Date(s.created_at).toLocaleString()}</TableCell>
                     <TableCell className="capitalize">{s.status}</TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => openTranscript(s)}>View Transcript</Button>
+                      <div className="flex items-center justify-end gap-2">
+                        {s.status === 'error' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => retrySession(s.id)}
+                            disabled={retryingSession === s.id}
+                          >
+                            {retryingSession === s.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="h-4 w-4" />
+                            )}
+                            {retryingSession === s.id ? 'Retrying...' : 'Retry'}
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => openTranscript(s)}>View Transcript</Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

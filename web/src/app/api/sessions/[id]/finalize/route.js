@@ -62,8 +62,19 @@ export async function POST(request, { params }) {
     const svc = createServiceClient()
     const prefix = `audio/${session.organization_id}/${session.id}`
     const { data: files } = await svc.storage.from('copilot.sh').list(prefix, { limit: 10000, sortBy: { column: 'name', order: 'asc' } })
-    const parts = (files || []).filter(f => f.name.endsWith('.webm') || f.name.endsWith('.ogg') || f.name.endsWith('.m4a'))
-    if (parts.length === 0) {
+    const parts = (files || []).filter(f => /(\.webm|\.ogg|\.m4a|\.wav|\.flac|\.bin|\.mp3)$/i.test(f.name))
+
+    // Also allow single combined file variants outside the folder
+    let hasSingleCombined = false
+    try {
+      for (const ext of ['ogg', 'webm', 'm4a', 'wav', 'flac', 'bin', 'mp3']) {
+        const p = `audio/${session.organization_id}/${session.id}.${ext}`
+        const { data: ex } = await svc.storage.from('copilot.sh').download(p)
+        if (ex) { hasSingleCombined = true; break }
+      }
+    } catch { }
+
+    if (parts.length === 0 && !hasSingleCombined) {
       console.error('[finalize] no parts found for', { sessionId, prefix })
       return NextResponse.json({ message: 'No audio parts to process' }, { status: 400 })
     }
@@ -73,7 +84,11 @@ export async function POST(request, { params }) {
     try { body = await request.json() } catch { }
     const title = typeof body?.title === 'string' ? body.title.slice(0, 200) : null
     const summaryPrompt = typeof body?.summary_prompt === 'string' ? body.summary_prompt.slice(0, 2000) : null
-    const update = { status: 'uploaded' }
+    const update = {
+      status: 'uploaded',
+      gcs_operation_name: null,  // Clear any previous operation name for clean reprocessing
+      gcs_audio_uri: null       // Clear any previous GCS URI as well
+    }
     if (title) update.title = title
     if (typeof summaryPrompt === 'string') update.summary_prompt = summaryPrompt
     await supabase.from('sessions').update(update).eq('id', sessionId)

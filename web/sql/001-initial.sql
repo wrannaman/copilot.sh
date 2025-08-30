@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session
+  gcs_operation_name TEXT,     -- Google Cloud Speech operation name for recovery
+  gcs_audio_uri TEXT,          -- GCS URI for audio file during transcription
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

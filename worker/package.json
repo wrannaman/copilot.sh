@@ -14,10 +14,13 @@
     "@ai-sdk/google": "^1.1.9",
     "@google-cloud/speech": "^6.6.0",
     "@google-cloud/storage": "^7.17.0",
+    "@langchain/core": "^0.3.72",
+    "@langchain/google-genai": "^0.2.16",
     "@supabase/supabase-js": "^2.48.1",
     "ai": "^3.3.38",
     "dotenv": "^17.2.1",
     "ffmpeg-static": "^5.2.0",
+    "langchain": "^0.3.31",
     "zod": "^3.23.8"
   }
 }

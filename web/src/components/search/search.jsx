@@ -455,40 +455,6 @@ export function SearchComponent() {
           )}
         </div>
       )}
-
-      {/* Getting Started Help */}
-      {!hasSearched && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5" />
-              Search Tips
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <h4 className="font-medium mb-2">What you can search for:</h4>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• Specific topics discussed</li>
-                  <li>• Action items and commitments</li>
-                  <li>• People mentioned</li>
-                  <li>• Questions and decisions</li>
-                </ul>
-              </div>
-              <div>
-                <h4 className="font-medium mb-2">Search examples:</h4>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• "project deadline"</li>
-                  <li>• "follow up with Sarah"</li>
-                  <li>• "budget discussion"</li>
-                  <li>• "next steps"</li>
-                </ul>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
