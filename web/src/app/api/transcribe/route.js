@@ -393,50 +393,7 @@ export async function POST(request) {
         }
 
         // Also persist a searchable chunk with context-augmented embedding
-        try {
-          // Fetch the immediately previous chunk to add light overlap context to the embedding only
-          let contextPrefix = ''
-          try {
-            const { data: lastChunk } = await supabase
-              .from('session_chunks')
-              .select('content, created_at')
-              .eq('session_id', todaySession.id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle()
-            if (lastChunk?.content) {
-              // Use a small tail to preserve sentence continuity without changing stored content
-              const CONTEXT_CHARS = 400
-              contextPrefix = String(lastChunk.content).slice(-CONTEXT_CHARS)
-            }
-          } catch (_) { }
-
-          const chunkContent = textToAppend || ''
-          if (!chunkContent) {
-            console.log('🔄 [transcribe] Skipping chunk insert due to duplicate/empty delta')
-          } else {
-            const augmented = contextPrefix ? `${contextPrefix}\n${chunkContent}` : chunkContent
-            const [embedding] = await embedTexts([augmented])
-
-            if (Array.isArray(embedding) && embedding.length > 0 && todaySession?.id) {
-              const { error: chunkError } = await supabase
-                .from('session_chunks')
-                .insert({
-                  session_id: todaySession.id,
-                  content: chunkContent, // store deduped content
-                  start_time_seconds: null,
-                  end_time_seconds: null,
-                  speaker_tag: null,
-                  embedding
-                })
-              if (chunkError) {
-                console.error('❌ [transcribe] Failed to insert session chunk:', chunkError)
-              }
-            }
-          }
-        } catch (embedErr) {
-          console.error('❌ [transcribe] Embedding/chunk insert failed:', embedErr?.message)
-        }
+        // Indexing disabled for MVP summary-only approach
       } else {
         console.log('[transcribe] No transcript text from recognizer; nothing to append')
       }

@@ -1,5 +1,5 @@
 -- ============================================================================
--- Action AI – Supabase Schema (org-scoped, RLS-first)
+-- Copilot AI – Supabase Schema (org-scoped, RLS-first)
 -- ============================================================================
 
 -- Extensions
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   organization_id UUID NOT NULL REFERENCES org(id) ON DELETE CASCADE,
   created_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
   title TEXT,
+  summary_prompt TEXT,
   status session_status NOT NULL DEFAULT 'idle',
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   ended_at TIMESTAMPTZ,
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   audio_path TEXT,             -- storage path (private)
   audio_mime TEXT,             -- e.g., audio/webm
   transcript_storage_path TEXT, -- path to transcript file in storage
+  raw_transcript_path TEXT,    -- path to raw transcript JSON with timestamps/confidence
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session

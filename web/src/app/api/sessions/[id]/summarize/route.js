@@ -1,0 +1,101 @@
+import { NextResponse } from 'next/server'
+import { createServiceClient } from '@/utils/supabase/server'
+import { embedTexts } from '@/server/ai/embedding'
+import { generateObject } from 'ai'
+import { google } from '@ai-sdk/google'
+import { z } from 'zod'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function POST(request, { params }) {
+  try {
+    const p = await params
+    const sessionId = p?.id
+    if (!sessionId) return NextResponse.json({ message: 'Missing session id' }, { status: 400 })
+
+    const supabase = createServiceClient()
+    const { data: session } = await supabase
+      .from('sessions')
+      .select('id, organization_id, transcript_storage_path')
+      .eq('id', sessionId)
+      .maybeSingle()
+
+    if (!session || !session.transcript_storage_path) {
+      return NextResponse.json({ message: 'Transcript not available' }, { status: 400 })
+    }
+
+    // Optional custom prompt
+    let customPrompt = ''
+    try {
+      const body = await request.json()
+      if (body && typeof body.prompt === 'string') customPrompt = body.prompt
+    } catch { }
+
+    // Load transcript
+    const { data: blob } = await supabase.storage.from('copilot.sh').download(session.transcript_storage_path)
+    if (!blob) return NextResponse.json({ message: 'Transcript file missing' }, { status: 404 })
+    const transcriptText = await blob.text()
+    const plain = transcriptText
+      .split('\n')
+      .map(line => {
+        if (line.startsWith('_TIMESTAMP_')) {
+          const idx = line.indexOf('|')
+          return idx > -1 ? line.slice(idx + 1) : line
+        }
+        return line
+      })
+      .join('\n')
+      .trim()
+
+    const schema = z.object({
+      summary: z.string(),
+      action_items: z.array(z.string()).default([]),
+      topics: z.array(z.string()).default([])
+    })
+
+    const { object } = await generateObject({
+      model: google(process.env.SUMMARY_MODEL_ID || 'gemini-2.5-flash'),
+      schema,
+      prompt: `${customPrompt && customPrompt.trim() ? customPrompt.trim() + '\n\n' : ''}You are an executive meeting summarizer. Produce a concise 5-10 sentence summary and a crisp list of action items. Use neutral tone, avoid fluff, and prefer concrete details. If noisy or repetitive text exists, de-duplicate.
+
+TRANSCRIPT:
+${plain.slice(0, 120_000)}
+`,
+      temperature: 0.2
+    })
+
+    // Save summary JSON next to transcript
+    const path = `summaries/${session.organization_id}/${session.id}.json`
+    await supabase.storage
+      .from('copilot.sh')
+      .upload(path, new Blob([JSON.stringify(object, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+
+    // Index the summary only (summary + action items) for search
+    try {
+      const joined = [
+        object?.summary || '',
+        (Array.isArray(object?.action_items) && object.action_items.length) ? `Action items:\n- ${object.action_items.join('\n- ')}` : ''
+      ].filter(Boolean).join('\n\n').trim()
+      if (joined) {
+        const [embedding] = await embedTexts([joined])
+        if (Array.isArray(embedding) && embedding.length) {
+          await supabase
+            .from('session_chunks')
+            .insert({ session_id: sessionId, content: joined, start_time_seconds: null, end_time_seconds: null, speaker_tag: 'summary', embedding })
+        }
+      }
+    } catch (e) {
+      console.warn('❌ summary embedding failed:', e?.message)
+    }
+
+    // Also stamp on the session row for quick access
+    await supabase.from('sessions').update({ status: 'ready' }).eq('id', sessionId)
+
+    return NextResponse.json({ ok: true, summary_path: path, ...object })
+  } catch (e) {
+    return NextResponse.json({ message: 'Summarization failed', details: e?.message }, { status: 500 })
+  }
+}
+
+

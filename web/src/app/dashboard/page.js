@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { AuthGuard } from "@/components/auth-guard";
 
@@ -12,7 +16,9 @@ import {
   Search,
   Settings,
   BarChart3,
-  Zap
+  Zap,
+  Upload,
+  Loader2
 } from 'lucide-react';
 import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 import { SearchComponent } from '@/components/search/search';
@@ -25,6 +31,87 @@ function DashboardContent() {
   const { user, currentOrganization } = useAuth();
   const [activeTab, setActiveTab] = useState('search'); // search, analytics
 
+  // Upload modal state
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadSummaryPrompt, setUploadSummaryPrompt] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState(""); // Status messages
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const fileInputRef = useRef(null);
+
+  async function handleUploadFile(file) {
+    if (!file) return;
+
+    try {
+      setUploading(true);
+      setUploadSuccess(false);
+      setUploadStatus(`Preparing upload for ${file.name}...`);
+
+      // 1) Create session with optional title/prompt
+      setUploadStatus("Creating session...");
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: uploadTitle || null,
+          summary_prompt: uploadSummaryPrompt || null
+        })
+      });
+
+      if (!res.ok) throw new Error(`create session ${res.status}`);
+      const data = await res.json();
+      const sessionId = data?.session_id;
+      if (!sessionId) throw new Error('no session id');
+
+      // 2) Upload file to chunk endpoint
+      setUploadStatus("Uploading audio file...");
+      const form = new FormData();
+      const mime = file.type || 'audio/webm';
+      const name = file.name || 'upload.webm';
+      form.append('chunk', new File([file], name, { type: mime }));
+      form.append('mimeType', mime);
+      form.append('seq', '0'); // Use numeric seq for single-file uploads
+
+      const up = await fetch(`/api/sessions/${sessionId}/chunk`, {
+        method: 'POST',
+        body: form
+      });
+      if (!up.ok) throw new Error(`upload failed ${up.status}`);
+
+      // 3) Finalize with optional fields
+      setUploadStatus("Processing and transcribing...");
+      const fin = await fetch(`/api/sessions/${sessionId}/finalize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: uploadTitle || null,
+          summary_prompt: uploadSummaryPrompt || null
+        })
+      });
+      if (!fin.ok) throw new Error(`finalize failed ${fin.status}`);
+
+      // Success!
+      setUploadSuccess(true);
+      setUploadStatus("✅ Upload successful! Audio has been transcribed and is ready to search.");
+
+      // Auto-close after showing success for a moment
+      setTimeout(() => {
+        setUploadTitle("");
+        setUploadSummaryPrompt("");
+        setUploadStatus("");
+        setUploadSuccess(false);
+        setUploadOpen(false);
+      }, 2000);
+
+    } catch (e) {
+      console.warn('upload failed', e);
+      setUploadStatus(`❌ Upload failed: ${e.message}`);
+      setUploadSuccess(false);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -57,6 +144,132 @@ function DashboardContent() {
                     Start Recording
                   </Link>
                 </Button>
+
+                <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload Audio
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Upload Audio File</DialogTitle>
+                      <DialogDescription>
+                        Upload an existing audio file to transcribe and summarize.
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="upload-title">Session Title (Optional)</Label>
+                        <Input
+                          id="upload-title"
+                          value={uploadTitle}
+                          onChange={(e) => setUploadTitle(e.target.value)}
+                          placeholder="Weekly sync with team"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="upload-prompt">AI Summary Instructions (Optional)</Label>
+                        <Textarea
+                          id="upload-prompt"
+                          value={uploadSummaryPrompt}
+                          onChange={(e) => setUploadSummaryPrompt(e.target.value)}
+                          placeholder="Summarize action items and decisions, highlight blockers."
+                          className="min-h-[80px]"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Audio File</Label>
+                        <div
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            const f = e.dataTransfer.files?.[0];
+                            if (f) await handleUploadFile(f);
+                          }}
+                          className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors"
+                        >
+                          <div className="space-y-3">
+                            <div className="text-sm text-muted-foreground">
+                              Drag and drop your audio file here, or
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fileInputRef.current?.click()}
+                              disabled={uploading}
+                            >
+                              Choose File
+                            </Button>
+                            <div className="text-xs text-muted-foreground">
+                              Supports MP3, WAV, M4A, and WebM formats
+                            </div>
+                          </div>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="audio/*,video/webm"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (f) await handleUploadFile(f);
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Status Messages */}
+                      {uploadStatus && (
+                        <div className={`p-3 rounded-lg text-sm ${uploadSuccess
+                          ? 'bg-green-50 border border-green-200 text-green-800'
+                          : uploading
+                            ? 'bg-blue-50 border border-blue-200 text-blue-800'
+                            : 'bg-red-50 border border-red-200 text-red-800'
+                          }`}>
+                          <div className="flex items-center gap-2">
+                            {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
+                            <span>{uploadStatus}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <DialogFooter className="sm:justify-start">
+                      {!uploading && !uploadSuccess && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setUploadOpen(false);
+                            setUploadStatus("");
+                            setUploadSuccess(false);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                      {uploadSuccess && (
+                        <Button
+                          onClick={() => {
+                            setUploadTitle("");
+                            setUploadSummaryPrompt("");
+                            setUploadStatus("");
+                            setUploadSuccess(false);
+                            setUploadOpen(false);
+                          }}
+                        >
+                          Done
+                        </Button>
+                      )}
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
                 <Button asChild size="sm">
                   <Link href="/integrations">
                     <Settings className="h-4 w-4 mr-2" />
