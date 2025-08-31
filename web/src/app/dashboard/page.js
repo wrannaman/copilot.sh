@@ -26,6 +26,7 @@ import { SearchComponent } from '@/components/search/search';
 import QuickActions from '@/components/dashboard/QuickActions'
 
 import TextIngestCard from '@/components/dashboard/TextIngestCard'
+import { createClient as createSbClient } from '@/utils/supabase/client'
 
 function DashboardContent() {
   const { user, currentOrganization } = useAuth();
@@ -63,22 +64,25 @@ function DashboardContent() {
       if (!res.ok) throw new Error(`create session ${res.status}`);
       const data = await res.json();
       const sessionId = data?.session_id;
+      const sessionOrgId = data?.session?.organization_id;
       if (!sessionId) throw new Error('no session id');
 
-      // 2) Upload file to chunk endpoint
+      // 2) Request signed upload URL and upload (bypass RLS limits)
       setUploadStatus("Uploading audio file...");
-      const form = new FormData();
+      const supabase = createSbClient();
       const mime = file.type || 'audio/webm';
-      const name = file.name || 'upload.webm';
-      form.append('chunk', new File([file], name, { type: mime }));
-      form.append('mimeType', mime);
-      form.append('seq', '0'); // Use numeric seq for single-file uploads
-
-      const up = await fetch(`/api/sessions/${sessionId}/chunk`, {
+      const signRes = await fetch(`/api/sessions/${sessionId}/signed-upload`, {
         method: 'POST',
-        body: form
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mimeType: mime })
       });
-      if (!up.ok) throw new Error(`upload failed ${up.status}`);
+      if (!signRes.ok) throw new Error(`sign failed ${signRes.status}`);
+      const { token, path } = await signRes.json();
+      if (!token || !path) throw new Error('sign missing token or path');
+      const { error: uploadErr } = await supabase.storage
+        .from('copilot.sh')
+        .uploadToSignedUrl(path, token, file, { contentType: mime });
+      if (uploadErr) throw new Error(`upload failed: ${uploadErr.message}`);
 
       // 3) Finalize with optional fields
       setUploadStatus("Processing and transcribing...");
