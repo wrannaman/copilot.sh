@@ -144,7 +144,7 @@ export default function SearchScreen() {
                     {item.start_time_seconds != null ? `At ${formatDuration(item.start_time_seconds)}` : ''}
                   </ThemedText>
                   <Pressable onPress={() => onCopy(item.content)} className="px-3 py-1 rounded bg-zinc-900">
-                    <ThemedText className="text-white text-xs">Copy</ThemedText>
+                    <ThemedText lightColor="#ffffff" darkColor="#ffffff" style={{ fontSize: 12 }}>Copy</ThemedText>
                   </Pressable>
                 </View>
               </View>
