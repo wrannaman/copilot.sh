@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, TextInput, Pressable, Text, FlatList, ActivityIndicator, Alert } from 'react-native';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { getSupabase } from '@/lib/supabase';
@@ -113,47 +112,44 @@ export default function SearchScreen() {
   );
 
   return (
-    <ParallaxScrollView headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }} headerImage={<ThemedView />}>
-      <ThemedView className="gap-3">
-        <ThemedText type="title">Search</ThemedText>
-        <View className="flex-row items-center gap-2">
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search conversations, topics, commitments..."
-            className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
-          />
-          <Pressable
-            onPress={onSearch}
-            disabled={!query.trim() || !organizationId || loading}
-            className={`h-10 px-3 rounded-lg items-center justify-center ${!query.trim() || !organizationId || loading ? 'bg-gray-300' : 'bg-zinc-900'}`}
-          >
-            {loading ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <ThemedText className="text-white">Search</ThemedText>
-            )}
-          </Pressable>
-        </View>
-
-        {!loading && hasSearched && results.length === 0 ? (
-          <ThemedText className="text-gray-500 dark:text-gray-400 mt-4">No results</ThemedText>
-        ) : null}
-
-        {loading ? (
-          <View className="mt-6 items-center justify-center">
-            <ActivityIndicator />
+    <FlatList
+      data={results}
+      keyExtractor={(it, idx) => `${it.session_id}-${idx}`}
+      renderItem={renderItem}
+      contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+      ListHeaderComponent={(
+        <View>
+          <ThemedText type="title">Search</ThemedText>
+          <View className="flex-row items-center gap-2 mt-3">
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search conversations, topics, commitments..."
+              className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
+            />
+            <Pressable
+              onPress={onSearch}
+              disabled={!query.trim() || !organizationId || loading}
+              className={`h-10 px-3 rounded-lg items-center justify-center ${!query.trim() || !organizationId || loading ? 'bg-gray-300' : 'bg-zinc-900'}`}
+            >
+              {loading ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <ThemedText lightColor="#ffffff" darkColor="#ffffff">Search</ThemedText>
+              )}
+            </Pressable>
           </View>
-        ) : (
-          <FlatList
-            data={results}
-            keyExtractor={(it, idx) => `${it.session_id}-${idx}`}
-            renderItem={renderItem}
-            contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
-          />
-        )}
-      </ThemedView>
-    </ParallaxScrollView>
+          {!loading && hasSearched && results.length === 0 ? (
+            <ThemedText className="text-gray-500 dark:text-gray-400 mt-4">No results</ThemedText>
+          ) : null}
+          {loading ? (
+            <View className="mt-6 items-center justify-center">
+              <ActivityIndicator />
+            </View>
+          ) : null}
+        </View>
+      )}
+    />
   );
 }
 

@@ -128,7 +128,7 @@ function RecordScreenInner() {
   const pulseScale = useMemo(() => pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] }), [pulseAnim]);
   const pulseOpacity = useMemo(() => pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.35] }), [pulseAnim]);
 
-  const audioRecorder = useAudioRecorder({
+  const recordingOptions = useMemo(() => ({
     extension: '.m4a',
     sampleRate: 16000,
     numberOfChannels: 1,
@@ -136,7 +136,9 @@ function RecordScreenInner() {
       outputFormat: IOSOutputFormat.MPEG4AAC,
       audioQuality: AudioQuality.MEDIUM,
     },
-  } as any, (status) => {
+  } as any), []);
+
+  const audioRecorder = useAudioRecorder(recordingOptions, (status) => {
     console.log('[rec] status', status);
   });
   const recorderState = useAudioRecorderState(audioRecorder);
@@ -362,67 +364,116 @@ function RecordScreenInner() {
 
       const startChunk = async () => {
         try {
-          if (stopInProgressRef.current) return;
-          console.log('[rec] prepareToRecordAsync…');
-          await audioRecorderRef.current?.prepareToRecordAsync();
+          if (stopInProgressRef.current) {
+            console.log('[rec] startChunk skipped - stop in progress');
+            return;
+          }
+          if (!isRecordingRef.current) {
+            console.log('[rec] startChunk skipped - not recording');
+            return;
+          }
+          console.log('[rec] prepareToRecordAsync with fresh options…');
+          // Create a unique file path for each chunk to avoid reusing the same file
+          const chunkOptions = {
+            ...recordingOptions,
+            // Create a unique filename for each recording
+            fileUri: `${await ensureChunkDirAsync()}recording-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.m4a`
+          };
+          console.log('[rec] preparing with unique path:', chunkOptions.fileUri);
+          await audioRecorderRef.current?.prepareToRecordAsync(chunkOptions);
           console.log('[rec] record()');
           audioRecorderRef.current?.record();
           isNativeRecorderActiveRef.current = true;
+          console.log('[rec] startChunk completed successfully');
         } catch (e: any) {
           console.log('[rec] startChunk error', e?.message);
+          // If startChunk fails, we should stop the recording loop
+          if (isRecordingRef.current) {
+            console.log('[rec] stopping recording due to startChunk failure');
+            setIsRecording(false);
+          }
         }
       };
 
       const stopAndSendChunk = async () => {
         try {
-          if (!isNativeRecorderActiveRef.current) return;
-          if (stopInProgressRef.current) return;
+          if (stopInProgressRef.current) {
+            console.log('[rec] stopAndSendChunk skipped - already in progress');
+            return;
+          }
           stopInProgressRef.current = true;
-          console.log('[rec] stop()…');
-          await audioRecorderRef.current?.stop();
-          isNativeRecorderActiveRef.current = false;
-          const uri = getRecordingUri();
-          console.log('[rec] stopped uri', uri);
-          let finalUri: string | null = uri;
+          console.log('[rec] stopAndSendChunk - isNativeRecorderActive:', isNativeRecorderActiveRef.current);
+
+          let uri: string | null = null;
+          if (isNativeRecorderActiveRef.current) {
+            console.log('[rec] stop()…');
+            // --- FIXED: Capture the URI directly from the return value of stop() ---
+            const uriFromStop = await audioRecorderRef.current?.stop();
+            isNativeRecorderActiveRef.current = false;
+            // Use the reliable URI first, with a fallback to the old method just in case
+            uri = uriFromStop || getRecordingUri();
+            console.log('[rec] stopped with uri:', uri);
+          } else {
+            console.log('[rec] no active recording to stop, starting fresh');
+          }
+
+          // Reset the flag BEFORE starting the new chunk to avoid race condition
+          stopInProgressRef.current = false;
+          console.log('[rec] reset stopInProgressRef, about to startChunk');
+
           // Immediately restart recording to avoid gaps
           await startChunk();
-          // Copy and send old chunk in background
-          try {
-            if (uri) {
-              const info = await FileSystem.getInfoAsync(uri);
-              if (info.exists && info.size && info.size > 0) {
-                const dir = await ensureChunkDirAsync();
-                const target = `${dir}chunk-${Date.now()}.m4a`;
-                await FileSystem.copyAsync({ from: uri, to: target });
-                finalUri = target;
-                console.log('[rec] copied chunk to', target, 'bytes=', info.size);
+
+          // Copy and send old chunk in background (if we have one)
+          if (uri) {
+            // Process the old chunk in the background without blocking
+            (async () => {
+              try {
+                const info = await FileSystem.getInfoAsync(uri);
+                if (info.exists && info.size && info.size > 0) {
+                  const dir = await ensureChunkDirAsync();
+                  const target = `${dir}chunk-${Date.now()}.m4a`;
+                  await FileSystem.copyAsync({ from: uri, to: target });
+                  console.log('[rec] copied chunk to', target, 'bytes=', info.size);
+                  await enqueueUpload(target);
+                } else {
+                  console.log('[rec] no valid file to copy');
+                }
+              } catch (e: any) {
+                console.log('[rec] background copy/upload failed', e?.message);
               }
-            }
-          } catch (e: any) {
-            console.log('[rec] copy failed', e?.message);
-          }
-          if (finalUri) {
-            await enqueueUpload(finalUri);
+            })();
           } else {
             console.log('[rec] no uri after stop');
           }
         } catch (e: any) {
           console.log('[rec] stopAndSendChunk error', e?.message);
-        } finally {
           stopInProgressRef.current = false;
         }
       };
 
       const driveLoop = async () => {
-        if (!isRecordingRef.current) return;
+        console.log('[rec] driveLoop started, isRecording:', isRecordingRef.current);
+        if (!isRecordingRef.current) {
+          console.log('[rec] driveLoop exiting - not recording');
+          return;
+        }
         // Stop current and send previous buffer while immediately restarting recording
+        console.log('[rec] driveLoop calling stopAndSendChunk');
         await stopAndSendChunk();
-        if (!isRecordingRef.current) return;
+        console.log('[rec] driveLoop after stopAndSendChunk, isRecording:', isRecordingRef.current);
+        if (!isRecordingRef.current) {
+          console.log('[rec] driveLoop exiting after stopAndSendChunk - not recording');
+          return;
+        }
         nextSendAtRef.current = Date.now() + CHUNK_INTERVAL_MS;
+        console.log('[rec] driveLoop scheduling next iteration in', CHUNK_INTERVAL_MS, 'ms');
         cloudChunkTimeoutRef.current = setTimeout(driveLoop, CHUNK_INTERVAL_MS) as any;
       };
 
       setIsRecording(true);
+      // Wait a moment for the state to propagate to refs
+      await new Promise(resolve => setTimeout(resolve, 10));
       // kick off
       await startChunk();
       nextSendAtRef.current = Date.now() + CHUNK_INTERVAL_MS;
@@ -439,6 +490,7 @@ function RecordScreenInner() {
   }, [recorderState, isRecording, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload]);
 
   const stopAndFlush = useCallback(async () => {
+    console.log('[rec] stopAndFlush - cleaning up timers and capturing final chunk');
     if (cloudChunkTimeoutRef.current) {
       try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
       cloudChunkTimeoutRef.current = null;
@@ -448,23 +500,91 @@ function RecordScreenInner() {
       uiTickerRef.current = null;
     }
     nextSendAtRef.current = 0;
-    // countdown reset removed
-    setIsRecording(false);
+
+    // Capture the final chunk BEFORE setting recording to false
+    let finalUri: string | null = null;
     try {
       if (stopInProgressRef.current) {
         // best-effort: wait briefly for in-flight stop
-        await new Promise(r => setTimeout(r, 150));
+        console.log('[rec] waiting for in-flight stop to complete');
+        await new Promise(r => setTimeout(r, 200));
       }
-      console.log('[rec] manual stop()');
-      try { await audioRecorderRef.current?.stop(); } catch { }
-      console.log('[rec] stopped uri', audioRecorder.uri);
-      const rAny: any = audioRecorder as any;
-      const uri = (audioRecorder as any)?.uri || rAny?.url || (recorderState as any)?.url;
-      if (uri) {
-        // Route final chunk through the same queue to ensure MD5 dedupe and monotonic seq
-        await enqueueUpload(uri as string);
+
+      // Always try to stop the recorder to capture any partial recording
+      console.log('[rec] manual stop() - attempting to capture final chunk (isNativeRecorderActive:', isNativeRecorderActiveRef.current, ')');
+      try {
+        finalUri = await audioRecorderRef.current?.stop();
+        console.log('[rec] final uri from stop():', finalUri);
+
+        // If stop() returned undefined, try to get the URI from the recorder object
+        if (!finalUri) {
+          console.log('[rec] stop() returned undefined, trying fallback methods...');
+          const fallbackUri = (audioRecorderRef.current as any)?.uri;
+          const recorderStateUri = (recorderState as any)?.url;
+          console.log('[rec] fallback uri from recorder:', fallbackUri);
+          console.log('[rec] fallback uri from recorderState:', recorderStateUri);
+          finalUri = fallbackUri || recorderStateUri;
+
+          if (finalUri) {
+            console.log('[rec] using fallback uri:', finalUri);
+          } else {
+            // Last resort: check if we have a recent recording file
+            console.log('[rec] no URIs found, checking for recent recording files...');
+            try {
+              const dir = await ensureChunkDirAsync();
+              const files = await FileSystem.readDirectoryAsync(dir);
+              const recentRecordings = files
+                .filter(f => f.startsWith('recording-') && f.endsWith('.m4a'))
+                .map(f => ({ name: f, path: `${dir}${f}` }))
+                .sort((a, b) => b.name.localeCompare(a.name)) // Sort by name (timestamp) descending
+                .slice(0, 1); // Get the most recent
+
+              if (recentRecordings.length > 0) {
+                finalUri = recentRecordings[0].path;
+                console.log('[rec] found recent recording file:', finalUri);
+              }
+            } catch (e: any) {
+              console.log('[rec] failed to find recent recording files:', e?.message);
+            }
+          }
+        }
+
+        isNativeRecorderActiveRef.current = false;
+      } catch (e: any) {
+        console.log('[rec] stop() failed:', e?.message);
       }
-    } catch { }
+    } catch (e: any) {
+      console.log('[rec] error stopping final chunk:', e?.message);
+    }
+
+    // Now set recording to false
+    setIsRecording(false);
+
+    // Process the final chunk if we got one
+    if (finalUri) {
+      console.log('[rec] processing final chunk:', finalUri);
+      try {
+        // Check if it's a valid file with content
+        const info = await FileSystem.getInfoAsync(finalUri);
+        console.log('[rec] final chunk file info:', info);
+        if (info.exists && info.size && info.size > 50) { // Lowered threshold to catch smaller chunks
+          console.log('[rec] final chunk has', info.size, 'bytes - uploading');
+          console.log('[rec] calling enqueueUpload for final chunk...');
+          await enqueueUpload(finalUri as string);
+          console.log('[rec] enqueueUpload completed for final chunk');
+        } else {
+          console.log('[rec] final chunk too small (', info.size, 'bytes) - but trying anyway');
+          await enqueueUpload(finalUri as string);
+        }
+      } catch (e: any) {
+        console.log('[rec] error processing final chunk:', e?.message);
+        // Try to upload anyway
+        console.log('[rec] trying to upload final chunk despite error...');
+        await enqueueUpload(finalUri as string);
+      }
+    } else {
+      console.log('[rec] no final chunk to process - this is the problem!');
+    }
     // Call stop on the session
     try {
       const sid = sessionIdRef.current;
@@ -512,18 +632,35 @@ function RecordScreenInner() {
       <ThemedView className="gap-3">
         <ThemedText type="title">Recorder</ThemedText>
         <View className="mt-4 items-center justify-center">
-          <Pressable
-            onPress={isRecording ? stopAndFlush : startRecording}
-            className={`h-24 w-24 rounded-full items-center justify-center ${isRecording ? 'bg-red-600' : 'bg-zinc-900'}`}
-            accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
+          <View className="h-24 w-24 items-center justify-center">
             {isRecording ? (
-              <Ionicons name="stop" size={36} color="#ffffff" />
-            ) : (
-              <Ionicons name="mic" size={36} color="#ffffff" />
-            )}
-          </Pressable>
+              <Animated.View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  height: 96,
+                  width: 96,
+                  borderRadius: 9999,
+                  backgroundColor: '#ef4444',
+                  opacity: pulseOpacity as any,
+                  transform: [{ scale: pulseScale as any }],
+                }}
+              />
+            ) : null}
+            <Pressable
+              onPress={isRecording ? stopAndFlush : startRecording}
+              className={`h-24 w-24 rounded-full items-center justify-center ${isRecording ? 'bg-red-600' : 'bg-zinc-900'}`}
+              accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ zIndex: 1 }}
+            >
+              {isRecording ? (
+                <Ionicons name="stop" size={36} color="#ffffff" />
+              ) : (
+                <Ionicons name="mic" size={36} color="#ffffff" />
+              )}
+            </Pressable>
+          </View>
           {isRecording ? (
             <ThemedText className="text-green-600 font-semibold text-center mt-2">● Recording</ThemedText>
           ) : isSending ? (
@@ -658,7 +795,7 @@ function RecordScreenInner() {
                 accessibilityLabel={'Finalize & Summarize'}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <ThemedText className="text-white">
+                <ThemedText lightColor="#ffffff" darkColor="#ffffff">
                   {isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}
                 </ThemedText>
               </Pressable>
