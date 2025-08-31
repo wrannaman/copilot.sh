@@ -42,13 +42,13 @@ function HomeContent() {
         <section className="container mx-auto px-6 py-20 text-center">
           <div className="max-w-4xl mx-auto">
             <h2 className="text-5xl md:text-6xl font-bold text-foreground mb-6 tracking-tight">
-              🪩 Your AI memory. Open‑source. Always on.
+              🪩 Your AI memory for sales calls.
             </h2>
             <p className="text-xl md:text-2xl text-foreground font-semibold leading-relaxed">
-              Humane Pin raised $200M. <span className="font-bold">copilot.sh</span> is the $40 OSS version you actually own — continuous recording + agents that work for you.
+              Stop wasting hours on call notes. <span className="font-bold">Copilot.sh</span> records your conversations and turns them into actionable summaries ready for your CRM. Open‑source, private, and no bots required.
             </p>
             <p className="text-base md:text-lg text-muted-foreground mt-4 mb-10 leading-relaxed">
-              Runs in the browser, on your laptop, or a Raspberry Pi puck. Your data stays with you.
+              For sales teams and founders who sell. Works on web and mobile. Your data stays with you.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" asChild className="text-lg px-8 py-6">
@@ -74,25 +74,25 @@ function HomeContent() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Record</CardTitle>
-                  <CardDescription>Capture calls and conversations in the browser, laptop, or $40 Pi puck.</CardDescription>
+                  <CardDescription>Capture any call or conversation with one tap on your phone or in your browser.</CardDescription>
                 </CardHeader>
               </Card>
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Digest</CardTitle>
-                  <CardDescription>AI organizes into summaries, action items, and commitments with calendar context.</CardDescription>
+                  <CardDescription>Get instant AI summaries, action items, and key insights.</CardDescription>
                 </CardHeader>
               </Card>
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Act</CardTitle>
-                  <CardDescription>Agents push outputs anywhere — Notion, Docs, Gmail, Slack.</CardDescription>
+                  <CardTitle className="text-lg">Integrate</CardTitle>
+                  <CardDescription>Push perfect call notes to HubSpot, Notion, or Slack in a single click.</CardDescription>
                 </CardHeader>
               </Card>
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Recall</CardTitle>
-                  <CardDescription>Search: “what did I promise in the last QBR?” → instant answer.</CardDescription>
+                  <CardTitle className="text-lg">Search</CardTitle>
+                  <CardDescription>Instantly find any detail from past conversations. “What was their budget?”</CardDescription>
                 </CardHeader>
               </Card>
             </div>
@@ -135,10 +135,10 @@ function HomeContent() {
               <h3 className="text-3xl font-bold text-foreground">Features</h3>
             </div>
             <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Record in browser</CardTitle><CardDescription>One‑click capture in the browser or run 24/7 on a Pi puck.</CardDescription></CardHeader></Card>
+              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Record in browser</CardTitle><CardDescription>One‑click capture in the browser or on mobile.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Calendar context</CardTitle><CardDescription>Sessions auto‑tagged to Google Calendar events.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Agents</CardTitle><CardDescription>Automate: summarize, remind, email, or push to Notion/Docs.</CardDescription></CardHeader></Card>
-              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Integrations</CardTitle><CardDescription>Notion, Google Docs, Gmail (more coming).</CardDescription></CardHeader></Card>
+              <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Integrations</CardTitle><CardDescription>HubSpot, Notion, Slack (more coming).</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">Semantic search</CardTitle><CardDescription>Ask natural questions and get instant answers.</CardDescription></CardHeader></Card>
               <Card className="border-border/50"><CardHeader className="pb-2"><CardTitle className="text-lg">MCP server</CardTitle><CardDescription>Query your memory from inside ChatGPT.</CardDescription></CardHeader></Card>
             </div>
@@ -177,33 +177,49 @@ function HomeContent() {
                 <thead>
                   <tr className="border-b border-border/50 text-muted-foreground">
                     <th className="py-3 pr-4">Feature</th>
-                    <th className="py-3 pr-4">Copilot.sh (OSS)</th>
-                    <th className="py-3">Humane Pin / Otter.ai</th>
+                    <th className="py-3 pr-4">Copilot.sh</th>
+                    <th className="py-3">Meeting Bots (Otter, etc.)</th>
                   </tr>
                 </thead>
                 <tbody className="text-muted-foreground">
                   <tr className="border-b border-border/30">
-                    <td className="py-3 pr-4">Cost</td>
-                    <td className="py-3 pr-4">$40 puck / free</td>
-                    <td className="py-3">$699 + subscription</td>
+                    <td className="py-3 pr-4">Intrusiveness</td>
+                    <td className="py-3 pr-4"><span className="font-semibold">None.</span> You control recording.</td>
+                    <td className="py-3">Bot joins your call.</td>
                   </tr>
                   <tr className="border-b border-border/30">
-                    <td className="py-3 pr-4">Control</td>
-                    <td className="py-3 pr-4">Yours forever</td>
+                    <td className="py-3 pr-4">Workflow</td>
+                    <td className="py-3 pr-4">Record → Integrate</td>
+                    <td className="py-3">Record → Copy/Paste</td>
+                  </tr>
+                  <tr className="border-b border-border/30">
+                    <td className="py-3 pr-4">Ownership</td>
+                    <td className="py-3 pr-4"><span className="font-semibold">Yours forever</span> (Open‑source)</td>
                     <td className="py-3">Vendor lock‑in</td>
                   </tr>
-                  <tr className="border-b border-border/30">
-                    <td className="py-3 pr-4">Privacy</td>
-                    <td className="py-3 pr-4">Local / OSS</td>
-                    <td className="py-3">Cloud‑first</td>
-                  </tr>
                   <tr>
-                    <td className="py-3 pr-4">Workflows</td>
-                    <td className="py-3 pr-4">Agents + plugins</td>
-                    <td className="py-3">Limited flexibility</td>
+                    <td className="py-3 pr-4">Cost</td>
+                    <td className="py-3 pr-4">Free (Self‑hosted)</td>
+                    <td className="py-3">Subscription fee</td>
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        {/* Vision */}
+        <section className="py-20">
+          <div className="container mx-auto px-6">
+            <div className="text-center mb-12">
+              <h3 className="text-3xl font-bold text-foreground">Our Vision: An Always‑On Future</h3>
+            </div>
+            <div className="max-w-3xl mx-auto text-center text-muted-foreground">
+              <p>
+                Were starting with a seamless software experience for mobile and desktop. In the future, we plan to
+                release an optional, open‑source hardware puck that can provide continuous, ambient capture for a truly
+                always‑on AI memory. Stay tuned.
+              </p>
             </div>
           </div>
         </section>

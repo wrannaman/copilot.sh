@@ -107,26 +107,32 @@ ${plain.slice(0, 120_000)}
       .from('copilot.sh')
       .upload(path, new Blob([JSON.stringify(object, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
 
-    // Index the summary only (summary + action items) for search
+    // Persist synthesis on sessions and compute session-level embedding
     try {
-      const joined = [
-        object?.summary || '',
-        (Array.isArray(object?.action_items) && object.action_items.length) ? `Action items:\n- ${object.action_items.join('\n- ')}` : ''
-      ].filter(Boolean).join('\n\n').trim()
-      if (joined) {
-        const [embedding] = await embedTexts([joined])
-        if (Array.isArray(embedding) && embedding.length) {
-          await supabase
-            .from('session_chunks')
-            .insert({ session_id: sessionId, content: joined, start_time_seconds: null, end_time_seconds: null, speaker_tag: 'summary', embedding })
-        }
+      const structured = {
+        action_items: Array.isArray(object?.action_items) ? object.action_items : [],
+        topics: Array.isArray(object?.topics) ? object.topics : []
       }
-    } catch (e) {
-      console.warn('❌ summary embedding failed:', e?.message)
-    }
+      const summaryText = (object?.summary || '').toString()
+      let summaryEmbedding = null
+      if (summaryText && summaryText.trim().length > 0) {
+        const [vec] = await embedTexts([summaryText])
+        if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
+      }
 
-    // Also stamp on the session row for quick access
-    await supabase.from('sessions').update({ status: 'ready' }).eq('id', sessionId)
+      await supabase
+        .from('sessions')
+        .update({
+          summary_text: summaryText,
+          structured_data: structured,
+          summary_embedding: summaryEmbedding,
+          status: 'ready'
+        })
+        .eq('id', sessionId)
+    } catch (e) {
+      console.warn('❌ session synthesis update failed:', e?.message)
+      await supabase.from('sessions').update({ status: 'ready' }).eq('id', sessionId)
+    }
 
     return NextResponse.json({ ok: true, summary_path: path, ...object })
   } catch (e) {

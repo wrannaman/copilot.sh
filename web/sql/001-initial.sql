@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
   title TEXT,
   summary_prompt TEXT,
+  summary_text TEXT,
+  structured_data JSONB,
+  summary_embedding VECTOR(768),
   status session_status NOT NULL DEFAULT 'idle',
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   ended_at TIMESTAMPTZ,
@@ -103,6 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(organization_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_creator ON sessions(created_by);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_calendar_event_ref ON sessions(calendar_event_ref);
+CREATE INDEX IF NOT EXISTS idx_sessions_structured_data ON sessions USING GIN ((structured_data));
+CREATE INDEX IF NOT EXISTS idx_sessions_summary_embedding ON sessions USING ivfflat (summary_embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Chunked transcript with embeddings for search (per session)
 CREATE TABLE IF NOT EXISTS session_chunks (
@@ -680,9 +685,137 @@ $$;
 GRANT EXECUTE ON FUNCTION match_session_chunks(INT, FLOAT, VECTOR, UUID[]) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- Minimal Search Function (semantic + optional time range filter)
+-- Session-level search RPC: search_sessions
+-- Caller should supply a query embedding; optional owner filter looks inside structured_data
 -- ----------------------------------------------------------------------------
--- (search function removed)
+CREATE OR REPLACE FUNCTION search_sessions(
+  p_org_id UUID,
+  p_query_embedding VECTOR(768),
+  p_owner_filter TEXT DEFAULT NULL,
+  p_match_count INT DEFAULT 10
+) RETURNS TABLE (
+  id UUID,
+  title TEXT,
+  summary_text TEXT,
+  started_at TIMESTAMPTZ,
+  similarity FLOAT
+)
+LANGUAGE sql
+STABLE
+AS $$
+  WITH semantic AS (
+    SELECT
+      s.id,
+      s.title,
+      s.summary_text,
+      s.started_at,
+      (1 - (s.summary_embedding <=> p_query_embedding)) AS similarity
+    FROM sessions s
+    WHERE s.organization_id = p_org_id
+      AND s.status = 'ready'
+      AND s.summary_embedding IS NOT NULL
+  ),
+  owner_hits AS (
+    SELECT s.id
+    FROM sessions s
+    WHERE s.organization_id = p_org_id
+      AND s.status = 'ready'
+      AND p_owner_filter IS NOT NULL
+      AND s.structured_data @> jsonb_build_object('action_items', jsonb_build_array(jsonb_build_object('owner', p_owner_filter)))
+  )
+  SELECT sem.id, sem.title, sem.summary_text, sem.started_at,
+         CASE WHEN oh.id IS NOT NULL THEN GREATEST(sem.similarity, 1.0) ELSE sem.similarity END AS similarity
+  FROM semantic sem
+  LEFT JOIN owner_hits oh ON sem.id = oh.id
+  ORDER BY similarity DESC NULLS LAST
+  LIMIT p_match_count;
+$$;
+
+GRANT EXECUTE ON FUNCTION search_sessions(UUID, VECTOR, TEXT, INT) TO authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- Hybrid search RPC: hybrid_search (sessions + chunks)
+-- Caller provides semantic embedding and optional websearch tsquery string
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION hybrid_search(
+  p_org_id UUID,
+  p_query_embedding VECTOR(768),
+  p_tsquery TEXT DEFAULT NULL,
+  p_match_count INT DEFAULT 20
+) RETURNS TABLE (
+  result_type TEXT,
+  session_id UUID,
+  session_title TEXT,
+  chunk_id UUID,
+  content TEXT,
+  start_time_seconds INT,
+  similarity FLOAT
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  v_tsquery TSQUERY;
+BEGIN
+  IF p_tsquery IS NOT NULL AND length(trim(p_tsquery)) > 0 THEN
+    v_tsquery := websearch_to_tsquery('english', p_tsquery);
+  ELSE
+    v_tsquery := NULL;
+  END IF;
+
+  RETURN QUERY
+  WITH results AS (
+    -- Session-level semantic over summaries
+    SELECT
+      'session'::TEXT AS result_type,
+      s.id AS session_id,
+      s.title AS session_title,
+      NULL::uuid AS chunk_id,
+      s.summary_text AS content,
+      NULL::int AS start_time_seconds,
+      (1 - (s.summary_embedding <=> p_query_embedding)) AS similarity
+    FROM sessions s
+    WHERE s.organization_id = p_org_id AND s.status = 'ready' AND s.summary_embedding IS NOT NULL
+
+    UNION ALL
+
+    -- Chunk-level semantic
+    SELECT
+      'chunk'::TEXT AS result_type,
+      sc.session_id,
+      s.title AS session_title,
+      sc.id AS chunk_id,
+      sc.content,
+      sc.start_time_seconds,
+      (1 - (sc.embedding <=> p_query_embedding)) AS similarity
+    FROM session_chunks sc
+    JOIN sessions s ON sc.session_id = s.id
+    WHERE s.organization_id = p_org_id AND s.status = 'ready' AND sc.embedding IS NOT NULL
+
+    UNION ALL
+
+    -- Chunk-level FTS
+    SELECT
+      'chunk'::TEXT AS result_type,
+      sc.session_id,
+      s.title AS session_title,
+      sc.id AS chunk_id,
+      sc.content,
+      sc.start_time_seconds,
+      ts_rank(sc.ts, v_tsquery) AS similarity
+    FROM session_chunks sc
+    JOIN sessions s ON sc.session_id = s.id
+    WHERE v_tsquery IS NOT NULL AND s.organization_id = p_org_id AND s.status = 'ready' AND sc.ts @@ v_tsquery
+  )
+  SELECT *
+  FROM results
+  WHERE similarity IS NOT NULL AND similarity > 0.5
+  ORDER BY similarity DESC
+  LIMIT p_match_count;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION hybrid_search(UUID, VECTOR, TEXT, INT) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Done

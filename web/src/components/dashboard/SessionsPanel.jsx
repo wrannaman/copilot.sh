@@ -43,19 +43,20 @@ export default function SessionsPanel({ organizationId }) {
     }
   }, [organizationId, page]);
 
+  const refreshSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      await loadSessions();
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [loadSessions]);
+
   useEffect(() => {
     if (!organizationId) return;
     setSessionsLoading(true);
     loadSessions().finally(() => setSessionsLoading(false));
   }, [organizationId, page, loadSessions]);
-
-  useEffect(() => {
-    if (!organizationId) return;
-    const id = setInterval(() => {
-      loadSessions();
-    }, 5000);
-    return () => clearInterval(id);
-  }, [organizationId, loadSessions]);
 
   useEffect(() => {
     // Reset to first page when org changes
@@ -237,6 +238,21 @@ export default function SessionsPanel({ organizationId }) {
         <CardDescription>Your recent recordings</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshSessions}
+            disabled={sessionsLoading}
+          >
+            {sessionsLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <RotateCcw className="h-4 w-4 mr-2" />
+            )}
+            Refresh
+          </Button>
+        </div>
         <div className="w-full overflow-x-auto">
           <Table>
             <TableHeader>

@@ -3,6 +3,8 @@ dotenv.config()
 
 import { loadCombinedOrConcat, transcribeWhole } from './lib/audio.js'
 import { supabaseService, uploadText, updateSession, uploadAudioToGCS, deleteFromGCS } from './lib/services.js'
+import { embedTexts } from './lib/embedding.js'
+import { processAndChunkTranscript } from './lib/chunks.js'
 import { summarizeTranscript } from './lib/summarize.js'
 import { SpeechClient } from '@google-cloud/speech'
 
@@ -152,8 +154,13 @@ async function processSession({ sessionId, organizationId }) {
     raw_transcript_path: rawResultsPath
   })
 
-  // Summarize in worker (long-running safe). Respect org-level prefs and optional per-session summary_prompt
+  // Start chunking + embeddings in parallel with summarization
+  const chunkingPromise = processAndChunkTranscript(sessionId, transcriptResults)
+    .catch(e => console.warn('[worker] chunking failed', e?.message))
+
+  // Summarize in worker and persist structured data + summary embedding
   try {
+    try { await updateSession(sessionId, { status: 'summarizing' }) } catch { }
     let userPrompt = ''
     let orgPrompt = ''
     let orgTopics = []
@@ -190,10 +197,33 @@ async function processSession({ sessionId, organizationId }) {
     const object = await summarizeTranscript(plain, instructions)
     const sumPath = `summaries/${organizationId}/${sessionId}.json`
     await uploadText(bucket, sumPath, JSON.stringify(object, null, 2), 'application/json')
-    console.log('worker summarize done', { sessionId, object })
+    let summaryEmbedding = null
+    const summaryText = (object?.summary || '').toString()
+    if (summaryText && summaryText.trim().length > 0) {
+      try {
+        const [vec] = await embedTexts([summaryText])
+        if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
+      } catch (e) {
+        console.warn('[worker] summary embedding failed', e?.message)
+      }
+    }
+    try {
+      await updateSession(sessionId, {
+        summary_text: summaryText,
+        structured_data: {
+          action_items: Array.isArray(object?.action_items) ? object.action_items : [],
+          topics: Array.isArray(object?.topics) ? object.topics : []
+        },
+        summary_embedding: summaryEmbedding
+      })
+    } catch (e) {
+      console.warn('[worker] failed to persist synthesis to sessions table', e?.message)
+    }
+    console.log('worker summarize done', { sessionId })
   } catch (e) {
     console.warn('worker summarize failed', e?.message)
   }
+  try { await chunkingPromise } catch { }
   await updateSession(sessionId, { status: 'ready' })
 }
 
