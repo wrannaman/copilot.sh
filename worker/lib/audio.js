@@ -117,9 +117,11 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
     config: {
       languageCode: 'en-US',
       enableAutomaticPunctuation: true,
-      enableSpeakerDiarization: true,
-      minSpeakerCount: 2,
-      maxSpeakerCount: 6,
+      diarizationConfig: {
+        enableSpeakerDiarization: true,
+        minSpeakerCount: 2,
+        maxSpeakerCount: 6
+      },
       enableWordTimeOffsets: true,
       encoding: 'ENCODING_UNSPECIFIED',
     },

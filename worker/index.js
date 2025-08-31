@@ -74,6 +74,21 @@ async function processSession({ sessionId, organizationId }) {
     const { text, results, operationName } = await transcribeWhole(audioBuf, gcsUri, saveOperationName)
     transcriptText = text
     transcriptResults = results
+    try {
+      console.log('[processSession] results_segments:', Array.isArray(results) ? results.length : 'n/a')
+      const first = Array.isArray(results) && results[0] ? results[0] : null
+      const alts = first?.alternatives || []
+      console.log('[processSession] first_alternatives:', Array.isArray(alts) ? alts.length : 0)
+      const words = first?.alternatives?.[0]?.words || []
+      console.log('[processSession] diarization_words_in_first:', Array.isArray(words) ? words.length : 0)
+      if (first) {
+        const preview = {
+          first_transcript_preview: String(first?.alternatives?.[0]?.transcript || '').slice(0, 200),
+          first_words_sample: Array.isArray(words) ? words.slice(0, 5) : []
+        }
+        console.log('[processSession] first_result_preview:', JSON.stringify(preview))
+      }
+    } catch { }
 
     // Clear GCS state now that transcription is done
     await updateSession(sessionId, {
@@ -92,8 +107,25 @@ async function processSession({ sessionId, organizationId }) {
       await deleteFromGCS(gcsFile)
     }
     const { text, results } = await transcribeWhole(audioBuf)
+    console.log("🚀 ~ results:", results)
+    console.log("🚀 ~ text:", text)
     transcriptText = text
     transcriptResults = results
+    try {
+      console.log('[processSession] (fallback) results_segments:', Array.isArray(results) ? results.length : 'n/a')
+      const first = Array.isArray(results) && results[0] ? results[0] : null
+      const alts = first?.alternatives || []
+      console.log('[processSession] (fallback) first_alternatives:', Array.isArray(alts) ? alts.length : 0)
+      const words = first?.alternatives?.[0]?.words || []
+      console.log('[processSession] (fallback) diarization_words_in_first:', Array.isArray(words) ? words.length : 0)
+      if (first) {
+        const preview = {
+          first_transcript_preview: String(first?.alternatives?.[0]?.transcript || '').slice(0, 200),
+          first_words_sample: Array.isArray(words) ? words.slice(0, 5) : []
+        }
+        console.log('[processSession] (fallback) first_result_preview:', JSON.stringify(preview))
+      }
+    } catch { }
   }
 
   console.log("🚀 ~ transcriptText:", transcriptText)
@@ -103,17 +135,17 @@ async function processSession({ sessionId, organizationId }) {
   const entry = `_TIMESTAMP_${new Date().toISOString()}|${transcriptText}\n`
   await uploadText(bucket, transcriptPath, entry)
 
-  // Store raw transcript results with timestamps, confidence, speaker info, etc.
+  // Store RAW Google results array exactly as returned (includes words with speakerTag/start/end)
   const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
-  const rawData = {
-    sessionId,
-    processedAt: new Date().toISOString(),
-    transcriptText,
-    totalBilledTime: transcriptResults?.totalBilledTime,
-    requestId: transcriptResults?.requestId,
-    results: transcriptResults?.results || []
-  }
-  await uploadText(bucket, rawResultsPath, JSON.stringify(rawData, null, 2), 'application/json')
+  const rawArray = Array.isArray(transcriptResults) ? transcriptResults : (transcriptResults?.results || [])
+  try {
+    const rc = Array.isArray(rawArray) ? rawArray.length : null
+    const firstWords = Array.isArray(rawArray?.[0]?.alternatives?.[0]?.words)
+      ? rawArray[0].alternatives[0].words.length
+      : 0
+    console.log('[processSession] saving RAW Google results:', { resultsCount: rc, firstWords })
+  } catch { }
+  await uploadText(bucket, rawResultsPath, JSON.stringify(rawArray, null, 2), 'application/json')
 
   await updateSession(sessionId, {
     transcript_storage_path: transcriptPath,
@@ -128,7 +160,7 @@ async function processSession({ sessionId, organizationId }) {
       const { data: row } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
       userPrompt = (row?.summary_prompt || '').toString()
     } catch { }
-    const plain = entry
+    const plain = (entry || '')
       .split('\n')
       .map(line => {
         if (line.startsWith('_TIMESTAMP_')) {
@@ -238,85 +270,17 @@ async function recoverTranscription({ sessionId, organizationId, operationName, 
     if (op.done) {
       console.log('[recoverTranscription] Operation completed, processing results')
 
-      let resp = op.response
+      // Use official helper to decode the long-running response
       let results = []
-
-      // Handle protobuf-encoded responses - use the proper Google Cloud method
-      if (resp?.type_url && resp?.value?.data) {
-        console.log('[recoverTranscription] Response is protobuf encoded, using operation.promise() method...')
-
-        try {
-          // Use the CORRECT approach from Google's sample code
-          // Instead of manually decoding protobuf, recreate the operation and use .promise()
-          const speech = getSpeechClient()
-
-          // Get the operation object that can decode the response
-          console.log('[recoverTranscription] Getting operation object and using promise() method...')
-          const operation = speech.operationsClient.longRunningRecognize({
-            name: operationName
-          })
-
-          // Use the proper method to get decoded response
-          const [decodedResponse] = await operation.promise()
-
-          console.log('[recoverTranscription] ✅ Successfully decoded using operation.promise()!')
-          console.log('[recoverTranscription] Response keys:', Object.keys(decodedResponse || {}))
-
-          if (decodedResponse?.results) {
-            results = decodedResponse.results
-            console.log('[recoverTranscription] Found', results.length, 'result segments')
-          } else {
-            console.log('[recoverTranscription] No results in decoded response, trying fallback...')
-
-            // Fallback: manual extraction
-            console.log('[recoverTranscription] Using manual extraction as fallback...')
-            const buffer = Buffer.from(resp.value.data)
-            let allText = []
-            let currentString = ''
-
-            for (let i = 0; i < buffer.length; i++) {
-              const byte = buffer[i]
-              if (byte >= 32 && byte <= 126) {
-                currentString += String.fromCharCode(byte)
-              } else {
-                if (currentString.length > 20) {
-                  allText.push(currentString)
-                }
-                currentString = ''
-              }
-            }
-            if (currentString.length > 20) {
-              allText.push(currentString)
-            }
-
-            console.log('[recoverTranscription] Manual extraction found:', allText.length, 'text segments')
-
-            if (allText.length > 0) {
-              const combinedText = allText.join(' ').trim()
-              results = [{
-                alternatives: [{
-                  transcript: combinedText,
-                  confidence: 0.9
-                }]
-              }]
-              console.log('[recoverTranscription] ✅ Manual extraction successful!')
-            }
-          }
-        } catch (decodeError) {
-          console.error('[recoverTranscription] Failed to decode protobuf response:', decodeError.message)
-        }
-      } else {
-        // Handle regular JSON responses
-        if (resp?.results) {
-          results = resp.results
-        } else if (resp?.value?.results) {
-          results = resp.value.results
-        } else if (Array.isArray(resp)) {
-          results = resp
-        } else {
-          console.log('[recoverTranscription] Unexpected response structure:', JSON.stringify(resp, null, 2))
-          results = []
-        }
+      try {
+        const decoded = await getSpeechClient().checkLongRunningRecognizeProgress(operationName)
+        // decoded.result should contain LongRunningRecognizeResponse
+        const response = decoded?.result || decoded?.latestResponse?.response || decoded
+        results = Array.isArray(response?.results) ? response.results : []
+        console.log('[recoverTranscription] Decoded results segments:', results.length)
+      } catch (e) {
+        console.error('[recoverTranscription] Failed to decode via checkLongRunningRecognizeProgress:', e?.message)
+        results = []
       }
 
       console.log('[recoverTranscription] Results', results)
@@ -333,16 +297,7 @@ async function recoverTranscription({ sessionId, organizationId, operationName, 
       await uploadText(bucket, transcriptPath, entry)
 
       const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
-      const rawData = {
-        sessionId,
-        processedAt: new Date().toISOString(),
-        transcriptText: text,
-        totalBilledTime: resp?.totalBilledTime,
-        requestId: resp?.requestId,
-        results: results,
-        recovered: true
-      }
-      await uploadText(bucket, rawResultsPath, JSON.stringify(rawData, null, 2), 'application/json')
+      await uploadText(bucket, rawResultsPath, JSON.stringify(results, null, 2), 'application/json')
 
       await updateSession(sessionId, {
         transcript_storage_path: transcriptPath,
@@ -360,7 +315,7 @@ async function recoverTranscription({ sessionId, organizationId, operationName, 
           userPrompt = (row?.summary_prompt || '').toString()
         } catch { }
 
-        const plain = entry.split('\n').map(line => {
+        const plain = (entry || '').split('\n').map(line => {
           if (line.startsWith('_TIMESTAMP_')) {
             const idx = line.indexOf('|'); return idx > -1 ? line.slice(idx + 1) : line
           }
@@ -414,7 +369,7 @@ async function pollAndStart() {
       .eq('status', 'uploaded')
       .order('created_at', { ascending: true })
       .limit(availableSlots)
-    console.log("🚀 ~ new candidates:", candidates)
+    // console.log("🚀 ~ new candidates:", candidates)
     for (const row of (candidates || [])) {
       if (runningSessions.has(row.id)) continue
       // Claim atomically
@@ -465,13 +420,12 @@ async function pollTranscribingSessions() {
     console.log(`[recovery] Found ${allTranscribing?.length || 0} total transcribing sessions`)
 
     if (allTranscribing && allTranscribing.length > 0) {
-      console.log(`[recovery] Session details:`, allTranscribing.map(s => ({
-        id: s.id,
-        created_at: s.created_at,
-        has_operation_name: !!s.gcs_operation_name,
-        operation_name: s.gcs_operation_name
-      })))
-
+      // console.log(`[recovery] Session details:`, allTranscribing.map(s => ({
+      //   id: s.id,
+      //   created_at: s.created_at,
+      //   has_operation_name: !!s.gcs_operation_name,
+      //   operation_name: s.gcs_operation_name
+      // })))
       const withOperationName = allTranscribing.filter(s => s.gcs_operation_name)
       const withoutOperationName = allTranscribing.filter(s => !s.gcs_operation_name)
 

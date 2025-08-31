@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session
+  calendar_event_ref UUID REFERENCES calendar_events(id) ON DELETE SET NULL, -- explicit link to our calendar_events row
   gcs_operation_name TEXT,     -- Google Cloud Speech operation name for recovery
   gcs_audio_uri TEXT,          -- GCS URI for audio file during transcription
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(organization_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_creator ON sessions(created_by);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_calendar_event_ref ON sessions(calendar_event_ref);
 
 -- Chunked transcript with embeddings for search (per session)
 CREATE TABLE IF NOT EXISTS session_chunks (

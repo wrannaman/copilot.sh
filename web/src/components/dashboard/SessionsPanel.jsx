@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
@@ -18,24 +18,33 @@ export default function SessionsPanel({ organizationId }) {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [retryingSession, setRetryingSession] = useState(null);
 
-  useEffect(() => {
-    async function loadSessions() {
-      if (!organizationId) return;
-      setSessionsLoading(true);
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('sessions')
-        .select('id,title,status,created_at,transcript_storage_path')
-        .eq('organization_id', organizationId)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (!error && Array.isArray(data)) {
-        setSessions(data);
-      }
-      setSessionsLoading(false);
+  const loadSessions = useCallback(async () => {
+    if (!organizationId) return;
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('id,title,status,created_at,transcript_storage_path')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (!error && Array.isArray(data)) {
+      setSessions(data);
     }
-    loadSessions();
   }, [organizationId]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    setSessionsLoading(true);
+    loadSessions().finally(() => setSessionsLoading(false));
+  }, [organizationId, loadSessions]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    const id = setInterval(() => {
+      loadSessions();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [organizationId, loadSessions]);
 
   async function openTranscript(session) {
     setSelectedSession(session);
@@ -45,23 +54,20 @@ export default function SessionsPanel({ organizationId }) {
     try {
       const supabase = createClient();
       let text = "";
-      if (session?.transcript_storage_path) {
+      // Prefer server API to get diarized/log-like transcript
+      try {
+        const resp = await fetch(`/api/sessions/${session.id}/transcript`)
+        if (resp.ok) {
+          text = await resp.text()
+        }
+      } catch { }
+      // As last resort, read flat storage directly (rare)
+      if (!text && session?.transcript_storage_path) {
         const { data: fileData, error } = await supabase.storage
           .from('copilot.sh')
           .download(session.transcript_storage_path);
         if (!error && fileData) {
           text = await fileData.text();
-        }
-      }
-      if (!text) {
-        const { data: chunks, error: chunksError } = await supabase
-          .from('session_chunks')
-          .select('content')
-          .eq('session_id', session.id)
-          .order('created_at', { ascending: true })
-          .limit(1000);
-        if (!chunksError && Array.isArray(chunks) && chunks.length) {
-          text = chunks.map(c => c.content).join("\n");
         }
       }
       setTranscriptText(text || "No transcript available yet.");

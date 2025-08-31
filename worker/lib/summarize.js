@@ -16,9 +16,9 @@ export async function summarizeTranscript(text, instructions = '') {
 
   try {
     const model = new ChatGoogleGenerativeAI({
-      modelName: process.env.SUMMARY_MODEL_ID || 'gemini-1.5-flash',
+      model: process.env.SUMMARY_MODEL_ID || 'gemini-2.5-flash',
       temperature: 0.2,
-      apiKey: process.env.GOOGLE_API_KEY
+      apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY
     })
 
     // Create text splitter for chunks with overlap
@@ -62,11 +62,11 @@ Create a final summary with:
 3. Main topics discussed (as a list)
 
 Use this exact JSON format:
-{
+{{
   "summary": "Your summary here...",
   "action_items": ["Item 1", "Item 2"],
   "topics": ["Topic 1", "Topic 2"]
-}
+}}
 `)
 
     // Use map-reduce chain for large documents
@@ -122,9 +122,8 @@ Use this exact JSON format:
 
     console.log(`[summarize] Generated summary: ${cleaned.summary.length} chars, ${cleaned.action_items.length} action items, ${cleaned.topics.length} topics`)
     return cleaned
-
   } catch (error) {
-    console.error('[summarize] Error:', error.message)
+    console.error('[summarize] Error:', error)
     // Fallback to empty summary on error
     return {
       summary: '',
@@ -133,6 +132,3 @@ Use this exact JSON format:
     }
   }
 }
-
-
-
