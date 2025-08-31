@@ -25,11 +25,13 @@ export async function POST(request, { params }) {
       return NextResponse.json({ message: 'Transcript not available' }, { status: 400 })
     }
 
-    // Optional custom prompt
+    // Optional custom prompt and force flag
     let customPrompt = ''
+    let force = false
     try {
       const body = await request.json()
       if (body && typeof body.prompt === 'string') customPrompt = body.prompt
+      if (body && body.force === true) force = true
     } catch { }
 
     // Load transcript
@@ -54,6 +56,19 @@ export async function POST(request, { params }) {
       topics: z.array(z.string()).default([])
     })
 
+    // If a saved summary exists and not forcing, return it
+    const path = `summaries/${session.organization_id}/${session.id}.json`
+    if (!force) {
+      try {
+        const existing = await supabase.storage.from('copilot.sh').download(path)
+        if (existing?.data) {
+          const txt = await existing.data.text()
+          const cached = JSON.parse(txt)
+          return NextResponse.json({ ok: true, summary_path: path, ...cached })
+        }
+      } catch { }
+    }
+
     const { object } = await generateObject({
       model: google(process.env.SUMMARY_MODEL_ID || 'gemini-2.5-flash'),
       schema,
@@ -66,7 +81,6 @@ ${plain.slice(0, 120_000)}
     })
 
     // Save summary JSON next to transcript
-    const path = `summaries/${session.organization_id}/${session.id}.json`
     await supabase.storage
       .from('copilot.sh')
       .upload(path, new Blob([JSON.stringify(object, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })

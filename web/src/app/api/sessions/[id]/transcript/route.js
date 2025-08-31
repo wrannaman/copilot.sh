@@ -131,13 +131,34 @@ function formatDiarizedTranscript(raw) {
       const start = toSeconds(word?.startTime)
       const end = toSeconds(word?.endTime)
       const text = String(word?.word || '').trim()
-      if (text) words.push({ speakerTag: tag || 1, start, end, text })
+      if (text) words.push({ speakerTag: tag, start, end, text })
     }
   }
   if (words.length > 0) {
+    // Only trust diarization if we have at least 2 speakers and decent coverage
+    const tagged = words.filter(w => Number.isFinite(w.speakerTag))
+    const coverage = tagged.length / words.length
+    const uniqueSpeakers = new Set(tagged.map(w => w.speakerTag)).size
+    if (uniqueSpeakers < 2 || coverage < 0.5) {
+      // Fallback to per-result formatting when diarization is unreliable
+      const resLines = []
+      let prevEnd = 0
+      for (const r of results) {
+        const altTxt = String(r?.alternatives?.[0]?.transcript || '').trim()
+        if (!altTxt) continue
+        const end = toSeconds(r?.resultEndTime)
+        const start = prevEnd
+        prevEnd = end
+        const body = wrapAt(altTxt.replace(/\s+/g, ' '), 120)
+        resLines.push(`[${formatTime(start)}-${formatTime(end)}] ${body}`)
+      }
+      return resLines.join('\n')
+    }
+
+    // Group consecutive words by speaker (ignore untagged words)
     const blocks = []
     let current = null
-    for (const w of words) {
+    for (const w of tagged) {
       if (!current || current.speakerTag !== w.speakerTag) {
         if (current) blocks.push(current)
         current = { speakerTag: w.speakerTag, start: w.start, end: w.end, words: [w.text] }
@@ -147,6 +168,8 @@ function formatDiarizedTranscript(raw) {
       }
     }
     if (current) blocks.push(current)
+    // Ensure blocks are sorted by start time
+    blocks.sort((a, b) => (a.start || 0) - (b.start || 0))
     const lines = blocks.map(b => {
       const start = formatTime(b.start)
       const end = formatTime(b.end)

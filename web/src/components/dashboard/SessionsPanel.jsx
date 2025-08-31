@@ -12,11 +12,12 @@ import { RotateCcw, Loader2 } from "lucide-react";
 export default function SessionsPanel({ organizationId }) {
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState(null);
-  const [transcriptText, setTranscriptText] = useState("");
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [retryingSession, setRetryingSession] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsSummary, setDetailsSummary] = useState(null);
+  const [detailsTranscript, setDetailsTranscript] = useState("");
 
   const loadSessions = useCallback(async () => {
     if (!organizationId) return;
@@ -78,9 +79,61 @@ export default function SessionsPanel({ organizationId }) {
     }
   }
 
-  async function copyTranscript() {
+  async function openDetails(session) {
+    if (!session || session.status !== 'ready') return;
+    setSelectedSession(session);
+    setDetailsOpen(true);
+    setDetailsLoading(true);
+    setDetailsSummary(null);
+    setDetailsTranscript("");
     try {
-      await navigator.clipboard.writeText(transcriptText || "");
+      // Fetch transcript from API (diarized/log-style if available)
+      try {
+        const resp = await fetch(`/api/sessions/${session.id}/transcript`)
+        if (resp.ok) {
+          setDetailsTranscript(await resp.text())
+        } else {
+          setDetailsTranscript("No transcript available yet.")
+        }
+      } catch {
+        setDetailsTranscript("Failed to load transcript.")
+      }
+
+      // Generate/fetch summary
+      try {
+        const resp = await fetch(`/api/sessions/${session.id}/summarize`, { method: 'POST' })
+        if (resp.ok) {
+          const json = await resp.json()
+          setDetailsSummary({
+            summary: json?.summary || '',
+            action_items: Array.isArray(json?.action_items) ? json.action_items : [],
+            topics: Array.isArray(json?.topics) ? json.topics : []
+          })
+        } else {
+          setDetailsSummary({ summary: '', action_items: [], topics: [] })
+        }
+      } catch {
+        setDetailsSummary({ summary: '', action_items: [], topics: [] })
+      }
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
+
+  async function copyDetailsTranscript() {
+    try { await navigator.clipboard.writeText(detailsTranscript || "") } catch { }
+  }
+  async function copyDetailsSummary() {
+    try {
+      const s = detailsSummary?.summary || ''
+      const ai = Array.isArray(detailsSummary?.action_items) && detailsSummary.action_items.length
+        ? `\n\nAction items:\n- ${detailsSummary.action_items.join('\n- ')}`
+        : ''
+      const tp = Array.isArray(detailsSummary?.topics) && detailsSummary.topics.length
+        ? `\n\nTopics:\n- ${detailsSummary.topics.join('\n- ')}`
+        : ''
+      const all = `${s}${ai}${tp}`.trim()
+      await navigator.clipboard.writeText(all)
     } catch { }
   }
 
@@ -199,7 +252,9 @@ export default function SessionsPanel({ organizationId }) {
                             {retryingSession === s.id ? 'Retrying...' : 'Retry'}
                           </Button>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => openTranscript(s)}>View Transcript</Button>
+                        {s.status === 'ready' && (
+                          <Button size="sm" onClick={() => openDetails(s)}>View Details</Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -210,23 +265,63 @@ export default function SessionsPanel({ organizationId }) {
         </div>
       </CardContent>
 
-      <Dialog open={transcriptOpen} onOpenChange={setTranscriptOpen}>
-        <DialogContent className="max-w-3xl">
+      {/* Transcript-only dialog removed */}
+
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>{selectedSession?.title || 'Transcript'}</DialogTitle>
+            <DialogTitle>{selectedSession?.title || 'Session Details'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">Session ID: {selectedSession?.id}</div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={copyTranscript} disabled={transcriptLoading}>Copy</Button>
+          <div className="space-y-6">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm text-muted-foreground">Summary</div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={copyDetailsSummary} disabled={detailsLoading}>Copy Summary</Button>
+                </div>
               </div>
+              {detailsLoading ? (
+                <div className="text-sm text-muted-foreground">Loading…</div>
+              ) : detailsSummary && (detailsSummary.summary || (detailsSummary.action_items?.length || detailsSummary.topics?.length)) ? (
+                <div className="space-y-3">
+                  {detailsSummary.summary ? (
+                    <div className="whitespace-pre-wrap leading-relaxed text-sm">{detailsSummary.summary}</div>
+                  ) : null}
+                  {Array.isArray(detailsSummary.action_items) && detailsSummary.action_items.length > 0 ? (
+                    <div>
+                      <div className="font-medium text-sm mb-1">Action items</div>
+                      <ul className="list-disc pl-5 space-y-1 text-sm">
+                        {detailsSummary.action_items.map((it, idx) => (
+                          <li key={idx}>{it}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {Array.isArray(detailsSummary.topics) && detailsSummary.topics.length > 0 ? (
+                    <div>
+                      <div className="font-medium text-sm mb-1">Topics</div>
+                      <div className="flex flex-wrap gap-2">
+                        {detailsSummary.topics.map((t, idx) => (
+                          <span key={idx} className="px-2 py-0.5 rounded border text-xs">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No summary yet.</div>
+              )}
             </div>
-            <Textarea
-              className="min-h-[300px]"
-              value={transcriptLoading ? 'Loading…' : (transcriptText || '')}
-              readOnly
-            />
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm text-muted-foreground">Transcript</div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={copyDetailsTranscript} disabled={detailsLoading}>Copy Transcript</Button>
+                </div>
+              </div>
+              <Textarea className="min-h-[240px]" value={detailsLoading ? 'Loading…' : (detailsTranscript || '')} readOnly />
+            </div>
           </div>
         </DialogContent>
       </Dialog>
