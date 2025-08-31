@@ -1,7 +1,7 @@
 import { google } from '@ai-sdk/google'
 import { embed } from 'ai'
 
-const DEFAULT_MODEL = process.env.EMBEDDING_MODEL_ID || 'gemini-embedding-001'
+const DEFAULT_MODEL = process.env.EMBEDDING_MODEL_ID || 'text-embedding-004'
 
 export async function embedTexts(rawTexts = []) {
   const texts = Array.isArray(rawTexts) ? rawTexts : [rawTexts]

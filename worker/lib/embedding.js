@@ -1,7 +1,23 @@
 import { google } from '@ai-sdk/google'
 import { embed } from 'ai'
 
-const DEFAULT_MODEL = process.env.EMBEDDING_MODEL_ID || 'gemini-embedding-001'
+const DEFAULT_MODEL = process.env.EMBEDDING_MODEL_ID || 'text-embedding-004'
+
+function normalizeEmbeddingDimensions(vector, targetDims = 768) {
+  const dims = Array.isArray(vector) ? vector.length : 0
+  if (dims === targetDims) return vector
+  if (dims > targetDims) {
+    // Simple, deterministic slice to target size
+    const sliced = vector.slice(0, targetDims)
+    console.warn('[embedding] normalized by slicing', { from: dims, to: targetDims })
+    return sliced
+  }
+  // Pad with zeros if model returns fewer dims
+  const padded = [...vector]
+  while (padded.length < targetDims) padded.push(0)
+  console.warn('[embedding] normalized by padding', { from: dims, to: targetDims })
+  return padded
+}
 
 export async function embedTexts(rawTexts = []) {
   const texts = Array.isArray(rawTexts) ? rawTexts : [rawTexts]
@@ -26,7 +42,8 @@ export async function embedTexts(rawTexts = []) {
         },
       },
     })
-    out.push(embedding)
+    const normalized = normalizeEmbeddingDimensions(embedding, 768)
+    out.push(normalized)
   }
   return out
 }

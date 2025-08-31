@@ -17,7 +17,8 @@ import {
   Settings,
   Zap,
   Upload,
-  Loader2
+  Loader2,
+  CheckCircle
 } from 'lucide-react';
 import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 import { SearchComponent } from '@/components/search/search';
@@ -38,6 +39,7 @@ function DashboardContent() {
   const [uploadStatus, setUploadStatus] = useState(""); // Status messages
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const fileInputRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState(null);
 
   async function handleUploadFile(file) {
     if (!file) return;
@@ -107,6 +109,7 @@ function DashboardContent() {
                 setUploadSummaryPrompt("");
                 setUploadStatus("");
                 setUploadSuccess(false);
+                setSelectedFile(null);
                 setUploadOpen(false);
               }, 2000);
               return;
@@ -208,37 +211,82 @@ function DashboardContent() {
                         <Label>Audio File</Label>
                         <div
                           onDragOver={(e) => e.preventDefault()}
-                          onDrop={async (e) => {
+                          onDrop={(e) => {
                             e.preventDefault();
                             const f = e.dataTransfer.files?.[0];
-                            if (f) await handleUploadFile(f);
+                            if (f) {
+                              setSelectedFile(f);
+                              setUploadSuccess(false);
+                            }
                           }}
-                          className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors"
+                          className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${selectedFile ? 'border-green-500 bg-green-50 dark:bg-green-950' : 'border-muted-foreground/25 hover:border-muted-foreground/50'}`}
                         >
-                          <div className="space-y-3">
-                            <div className="text-sm text-muted-foreground">
-                              Drag and drop your audio file here, or
+                          {!selectedFile ? (
+                            <div className="space-y-3">
+                              <div className="text-sm text-muted-foreground">
+                                Drag and drop your audio file here, or
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploading}
+                              >
+                                Choose File
+                              </Button>
+                              <div className="text-xs text-muted-foreground">
+                                Supports MP3, WAV, M4A, and WebM formats
+                              </div>
                             </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => fileInputRef.current?.click()}
-                              disabled={uploading}
-                            >
-                              Choose File
-                            </Button>
-                            <div className="text-xs text-muted-foreground">
-                              Supports MP3, WAV, M4A, and WebM formats
+                          ) : (
+                            <div className="flex flex-col items-center gap-3 py-1">
+                              <CheckCircle className="h-8 w-8 text-green-600" />
+                              <div className="text-sm font-medium">File selected</div>
+                              <div className="text-sm">
+                                <span className="font-semibold">{selectedFile.name}</span>
+                                {typeof selectedFile.size === 'number' && (
+                                  <span className="text-muted-foreground"> · {(selectedFile.size < 1024 * 1024)
+                                    ? `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`
+                                    : `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB`}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 pt-1">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => fileInputRef.current?.click()}
+                                  disabled={uploading}
+                                >
+                                  Replace file
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedFile(null);
+                                    setUploadSuccess(false);
+                                  }}
+                                  disabled={uploading}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
                             </div>
-                          </div>
+                          )}
                           <input
                             ref={fileInputRef}
                             type="file"
                             accept="audio/*,video/webm"
-                            onChange={async (e) => {
+                            onChange={(e) => {
                               const f = e.target.files?.[0];
-                              if (f) await handleUploadFile(f);
+                              if (f) {
+                                setSelectedFile(f);
+                                setUploadSuccess(false);
+                              }
                               e.target.value = '';
                             }}
                             className="hidden"
@@ -262,18 +310,30 @@ function DashboardContent() {
                       )}
                     </div>
 
-                    <DialogFooter className="sm:justify-start">
+                    <DialogFooter className="sm:justify-between">
                       {!uploading && !uploadSuccess && (
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setUploadOpen(false);
-                            setUploadStatus("");
-                            setUploadSuccess(false);
-                          }}
-                        >
-                          Cancel
-                        </Button>
+                        <>
+                          <Button
+                            onClick={async () => {
+                              if (!selectedFile) return;
+                              await handleUploadFile(selectedFile);
+                            }}
+                            disabled={!selectedFile}
+                          >
+                            Save & Process
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setUploadOpen(false);
+                              setUploadStatus("");
+                              setUploadSuccess(false);
+                              setSelectedFile(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </>
                       )}
                       {uploadSuccess && (
                         <Button
@@ -282,6 +342,7 @@ function DashboardContent() {
                             setUploadSummaryPrompt("");
                             setUploadStatus("");
                             setUploadSuccess(false);
+                            setSelectedFile(null);
                             setUploadOpen(false);
                           }}
                         >

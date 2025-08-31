@@ -103,7 +103,7 @@ async function loadCombinedOrConcat(bucket, organizationId, sessionId) {
   throw new Error('no audio')
 }
 
-async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
+async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null, waitForResults = true) {
   const speech = getSpeechClient()
 
   // Determine if we should use GCS URI or inline audio
@@ -141,6 +141,11 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
     }
   }
 
+  // If using GCS, prefer returning immediately and letting recovery poll pick it up
+  if (gcsUri && waitForResults === false) {
+    return { text: '', results: [], operationName }
+  }
+
 
   const startTime = Date.now()
 
@@ -161,7 +166,7 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
     throw error
   }
 
-  console.log('transcribeWhole ~ resp:', resp)
+  // Avoid logging full response to prevent oversized payloads in logs
 
   // Handle different response structures from Google Speech API
   let results = []
@@ -177,9 +182,6 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null) {
   }
 
   console.log('transcribeWhole ~ results array length:', results.length)
-  if (results.length > 0) {
-    console.log('transcribeWhole ~ first result sample:', JSON.stringify(results[0], null, 2))
-  }
 
   const text = results.map(r => r.alternatives?.[0]?.transcript || '').filter(Boolean).join(' ').trim()
   console.log('transcribeWhole ~ extracted text length:', text.length)

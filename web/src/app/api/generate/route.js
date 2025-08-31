@@ -6,7 +6,7 @@ import { createClient as createServiceClient } from '@/utils/supabase/server'
 import { embedTexts } from '@/server/ai/embedding'
 
 
-/// const model = google.textEmbedding('gemini-embedding-001');
+/// const model = google.textEmbedding('text-embedding-004');
 export async function POST(req) {
   try {
     const { prompt, sessionIds = [], topK = 12 } = await req.json()

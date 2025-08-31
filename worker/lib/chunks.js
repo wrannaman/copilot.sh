@@ -8,31 +8,59 @@ function toSeconds(time) {
   return s + (n / 1e9)
 }
 
-export function groupWordsIntoChunks(words, maxWordsPerChunk = 75) {
-  const chunks = []
+export function groupWordsIntoChunks(words, options = {}) {
+  // Chunk by duration and size only; do not split on speaker changes.
+  const maxWordsPerChunk = typeof options === 'number' ? options : (options.maxWordsPerChunk || 400)
+  const targetSeconds = typeof options === 'number' ? null : (options.targetSeconds || 180)
+  const minCharsPerChunk = typeof options === 'number' ? 120 : (options.minCharsPerChunk || 300)
+
+  const initial = []
   let current = []
-  let currentSpeaker = null
+  let currentStartSec = null
 
   for (const w of words) {
-    const speaker = w.speakerTag || currentSpeaker || 'UNKNOWN'
-    const chunkFull = current.length >= maxWordsPerChunk
-    const speakerChanged = current.length > 0 && speaker !== currentSpeaker
-    if (chunkFull || speakerChanged) {
-      chunks.push({ words: current, speaker_tag: currentSpeaker })
-      current = []
+    const chunkFullByWords = current.length >= maxWordsPerChunk
+    let chunkFullByTime = false
+    if (targetSeconds && current.length > 0) {
+      const start = currentStartSec != null ? currentStartSec : toSeconds(current[0]?.startTime)
+      const end = toSeconds(w?.endTime)
+      if (start != null && end != null && end - start >= targetSeconds) {
+        chunkFullByTime = true
+      }
     }
-    currentSpeaker = speaker
+    if (chunkFullByWords || chunkFullByTime) {
+      initial.push({ words: current, speaker_tag: null })
+      current = []
+      currentStartSec = null
+    }
+    if (current.length === 0) {
+      const s = toSeconds(w?.startTime)
+      currentStartSec = s != null ? s : currentStartSec
+    }
     current.push(w)
   }
 
   if (current.length > 0) {
-    chunks.push({ words: current, speaker_tag: currentSpeaker })
+    initial.push({ words: current, speaker_tag: null })
   }
 
-  return chunks
+  // Coalesce adjacent tiny chunks by character length
+  const coalesced = []
+  for (const g of initial) {
+    const contentLen = g.words.map(w => w.word).join(' ').trim().length
+    if (coalesced.length > 0 && contentLen < minCharsPerChunk) {
+      const prev = coalesced[coalesced.length - 1]
+      prev.words = prev.words.concat(g.words)
+    } else {
+      coalesced.push(g)
+    }
+  }
+
+  return coalesced
 }
 
 export async function processAndChunkTranscript(sessionId, googleResults) {
+  console.log('[chunks] start', { sessionId })
   const words = (Array.isArray(googleResults) ? googleResults : (googleResults?.results || []))
     .flatMap(r => r?.alternatives?.[0]?.words || [])
 
@@ -42,6 +70,7 @@ export async function processAndChunkTranscript(sessionId, googleResults) {
   }
 
   const groups = groupWordsIntoChunks(words)
+  console.log('[chunks] grouped words', { groups: groups.length })
   const payloads = groups.map(g => {
     const content = g.words.map(w => w.word).join(' ').trim()
     const start = toSeconds(g.words[0]?.startTime)
@@ -57,12 +86,15 @@ export async function processAndChunkTranscript(sessionId, googleResults) {
 
   // Embeddings
   const texts = payloads.map(p => p.content)
+  console.log('[chunks] creating embeddings', { chunks: texts.length })
   const embeddings = await embedTexts(texts)
+  console.log('[chunks] embeddings created', { embeddings: embeddings.length })
   for (let i = 0; i < payloads.length; i++) {
     payloads[i].embedding = embeddings[i] || null
   }
 
   const supabase = supabaseService()
+  console.log('[chunks] inserting into supabase.session_chunks', { count: payloads.length })
   const { error } = await supabase.from('session_chunks').insert(payloads)
   if (error) {
     console.error('[chunks] insert error:', error?.message)

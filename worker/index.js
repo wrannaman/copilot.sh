@@ -23,6 +23,104 @@ function getSpeechClient() {
   return new SpeechClient()
 }
 
+// Canonical finalization: save transcript + raw results, chunk + embed, summarize + embed, update session
+async function finalizeTranscription({ sessionId, organizationId, text, results }) {
+  const bucket = 'copilot.sh'
+  console.log('[finalize] begin', { sessionId, hasResults: Array.isArray(results), textLength: (text || '').length })
+
+  // Store transcript
+  const transcriptPath = `transcripts/${organizationId}/${sessionId}.txt`
+  const entry = `_TIMESTAMP_${new Date().toISOString()}|${text || ''}\n`
+  await uploadText(bucket, transcriptPath, entry)
+
+  // Store RAW Google results array exactly as returned
+  const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
+  const rawArray = Array.isArray(results) ? results : (results?.results || [])
+  await uploadText(bucket, rawResultsPath, JSON.stringify(rawArray, null, 2), 'application/json')
+
+  await updateSession(sessionId, {
+    transcript_storage_path: transcriptPath,
+    raw_transcript_path: rawResultsPath
+  })
+
+  // Chunking + embeddings in parallel with summarization
+  const chunkingPromise = processAndChunkTranscript(sessionId, results)
+    .catch(e => console.warn('[finalize] chunking failed', e?.message))
+
+  try {
+    try { await updateSession(sessionId, { status: 'summarizing' }) } catch { }
+    // Fetch guidance
+    let userPrompt = ''
+    let orgPrompt = ''
+    let orgTopics = []
+    let orgActionItems = []
+    try {
+      const supa = supabaseService()
+      const { data: row } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
+      userPrompt = (row?.summary_prompt || '').toString()
+    } catch { }
+    try {
+      const supa = supabaseService()
+      const { data: org } = await supa.from('org').select('settings').eq('id', organizationId).maybeSingle()
+      if (org?.settings?.summary_prefs?.prompt) orgPrompt = String(org.settings.summary_prefs.prompt)
+      if (Array.isArray(org?.settings?.summary_prefs?.topics)) orgTopics = org.settings.summary_prefs.topics
+      if (Array.isArray(org?.settings?.summary_prefs?.action_items)) orgActionItems = org.settings.summary_prefs.action_items
+    } catch { }
+
+    const plain = (entry || '')
+      .split('\n')
+      .map(line => {
+        if (line.startsWith('_TIMESTAMP_')) {
+          const idx = line.indexOf('|'); return idx > -1 ? line.slice(idx + 1) : line
+        }
+        return line
+      })
+      .join('\n')
+      .trim()
+
+    const guidanceParts = []
+    if (orgPrompt && orgPrompt.trim()) guidanceParts.push(orgPrompt.trim())
+    if (userPrompt && userPrompt.trim()) guidanceParts.push(userPrompt.trim())
+    if (orgTopics.length) guidanceParts.push(`Emphasize these topics: ${orgTopics.join(', ')}`)
+    if (orgActionItems.length) guidanceParts.push(`Prioritize action items related to: ${orgActionItems.join(', ')}`)
+    const instructions = guidanceParts.join('\n')
+
+    const object = await summarizeTranscript(plain, instructions)
+    const sumPath = `summaries/${organizationId}/${sessionId}.json`
+    await uploadText(bucket, sumPath, JSON.stringify(object, null, 2), 'application/json')
+
+    let summaryEmbedding = null
+    const summaryText = (object?.summary || '').toString()
+    if (summaryText && summaryText.trim().length > 0) {
+      try {
+        const [vec] = await embedTexts([summaryText])
+        if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
+      } catch (e) {
+        console.warn('[finalize] summary embedding failed', e?.message)
+      }
+    }
+    try {
+      await updateSession(sessionId, {
+        summary_text: summaryText,
+        structured_data: {
+          action_items: Array.isArray(object?.action_items) ? object.action_items : [],
+          topics: Array.isArray(object?.topics) ? object.topics : []
+        },
+        summary_embedding: summaryEmbedding
+      })
+    } catch (e) {
+      console.warn('[finalize] failed to persist synthesis to sessions table', e?.message)
+    }
+    console.log('[finalize] summarize done', { sessionId })
+  } catch (e) {
+    console.warn('[finalize] summarize failed', e?.message)
+  }
+
+  try { await chunkingPromise } catch { }
+  await updateSession(sessionId, { status: 'ready' })
+  console.log('[finalize] complete', { sessionId })
+}
+
 async function processSession({ sessionId, organizationId }) {
   const bucket = 'copilot.sh'
   // Load a single combined file if present, otherwise concat the recorded parts
@@ -39,8 +137,6 @@ async function processSession({ sessionId, organizationId }) {
   const estimatedDurationMinutes = estimatedDurationSeconds / 60
 
   console.log(`[processSession] Audio: ${audioSizeKB.toFixed(1)}KB, ${estimatedDurationSeconds.toFixed(1)}s (${estimatedDurationMinutes.toFixed(2)}min), ${isChunked ? `${chunkCount} chunks` : 'single file'}`)
-
-  let transcriptText
 
   // ALWAYS use GCS for all recordings - simpler, more reliable, handles any duration
   console.log(`[processSession] Always using GCS for transcription (${isChunked ? `${chunkCount} chunks` : 'single file'})`)
@@ -73,34 +169,10 @@ async function processSession({ sessionId, organizationId }) {
       }
     }
 
-    const { text, results, operationName } = await transcribeWhole(audioBuf, gcsUri, saveOperationName)
-    transcriptText = text
-    transcriptResults = results
-    try {
-      console.log('[processSession] results_segments:', Array.isArray(results) ? results.length : 'n/a')
-      const first = Array.isArray(results) && results[0] ? results[0] : null
-      const alts = first?.alternatives || []
-      console.log('[processSession] first_alternatives:', Array.isArray(alts) ? alts.length : 0)
-      const words = first?.alternatives?.[0]?.words || []
-      console.log('[processSession] diarization_words_in_first:', Array.isArray(words) ? words.length : 0)
-      if (first) {
-        const preview = {
-          first_transcript_preview: String(first?.alternatives?.[0]?.transcript || '').slice(0, 200),
-          first_words_sample: Array.isArray(words) ? words.slice(0, 5) : []
-        }
-        console.log('[processSession] first_result_preview:', JSON.stringify(preview))
-      }
-    } catch { }
-
-    // Clear GCS state now that transcription is done
-    await updateSession(sessionId, {
-      gcs_audio_uri: null,
-      gcs_operation_name: null
-    })
-
-    // Immediately delete the file from GCS - fuck paying Google for storage!
-    console.log('[processSession] Transcription complete, deleting GCS file...')
-    await deleteFromGCS(gcsFile)
+    const { operationName } = await transcribeWhole(audioBuf, gcsUri, saveOperationName, false)
+    console.log('[processSession] Transcription job started', { sessionId, operationName })
+    // Do not finalize here; recovery/transcribe loop will complete indexing + embeddings
+    return
 
   } catch (gcsError) {
     console.warn('[processSession] GCS upload failed, falling back to inline:', gcsError.message)
@@ -109,126 +181,15 @@ async function processSession({ sessionId, organizationId }) {
       await deleteFromGCS(gcsFile)
     }
     const { text, results } = await transcribeWhole(audioBuf)
-    console.log("🚀 ~ results:", results)
-    console.log("🚀 ~ text:", text)
-    transcriptText = text
-    transcriptResults = results
-    try {
-      console.log('[processSession] (fallback) results_segments:', Array.isArray(results) ? results.length : 'n/a')
-      const first = Array.isArray(results) && results[0] ? results[0] : null
-      const alts = first?.alternatives || []
-      console.log('[processSession] (fallback) first_alternatives:', Array.isArray(alts) ? alts.length : 0)
-      const words = first?.alternatives?.[0]?.words || []
-      console.log('[processSession] (fallback) diarization_words_in_first:', Array.isArray(words) ? words.length : 0)
-      if (first) {
-        const preview = {
-          first_transcript_preview: String(first?.alternatives?.[0]?.transcript || '').slice(0, 200),
-          first_words_sample: Array.isArray(words) ? words.slice(0, 5) : []
-        }
-        console.log('[processSession] (fallback) first_result_preview:', JSON.stringify(preview))
-      }
-    } catch { }
+    console.log('[processSession] Inline transcription completed', { sessionId, textLength: (text || '').length, resultsSegments: Array.isArray(results) ? results.length : 0 })
+    await finalizeTranscription({ sessionId, organizationId, text, results })
+    return
   }
-
-  console.log("🚀 ~ transcriptText:", transcriptText)
-
-  // Store transcript and raw results
-  const transcriptPath = `transcripts/${organizationId}/${sessionId}.txt`
-  const entry = `_TIMESTAMP_${new Date().toISOString()}|${transcriptText}\n`
-  await uploadText(bucket, transcriptPath, entry)
-
-  // Store RAW Google results array exactly as returned (includes words with speakerTag/start/end)
-  const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
-  const rawArray = Array.isArray(transcriptResults) ? transcriptResults : (transcriptResults?.results || [])
-  try {
-    const rc = Array.isArray(rawArray) ? rawArray.length : null
-    const firstWords = Array.isArray(rawArray?.[0]?.alternatives?.[0]?.words)
-      ? rawArray[0].alternatives[0].words.length
-      : 0
-    console.log('[processSession] saving RAW Google results:', { resultsCount: rc, firstWords })
-  } catch { }
-  await uploadText(bucket, rawResultsPath, JSON.stringify(rawArray, null, 2), 'application/json')
-
-  await updateSession(sessionId, {
-    transcript_storage_path: transcriptPath,
-    raw_transcript_path: rawResultsPath
-  })
-
-  // Start chunking + embeddings in parallel with summarization
-  const chunkingPromise = processAndChunkTranscript(sessionId, transcriptResults)
-    .catch(e => console.warn('[worker] chunking failed', e?.message))
-
-  // Summarize in worker and persist structured data + summary embedding
-  try {
-    try { await updateSession(sessionId, { status: 'summarizing' }) } catch { }
-    let userPrompt = ''
-    let orgPrompt = ''
-    let orgTopics = []
-    let orgActionItems = []
-    try {
-      const supa = supabaseService()
-      const { data: row } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
-      userPrompt = (row?.summary_prompt || '').toString()
-    } catch { }
-    try {
-      const supa = supabaseService()
-      const { data: org } = await supa.from('org').select('settings').eq('id', organizationId).maybeSingle()
-      if (org?.settings?.summary_prefs?.prompt) orgPrompt = String(org.settings.summary_prefs.prompt)
-      if (Array.isArray(org?.settings?.summary_prefs?.topics)) orgTopics = org.settings.summary_prefs.topics
-      if (Array.isArray(org?.settings?.summary_prefs?.action_items)) orgActionItems = org.settings.summary_prefs.action_items
-    } catch { }
-    const plain = (entry || '')
-      .split('\n')
-      .map(line => {
-        if (line.startsWith('_TIMESTAMP_')) {
-          const idx = line.indexOf('|'); return idx > -1 ? line.slice(idx + 1) : line
-        }
-        return line
-      })
-      .join('\n')
-      .trim()
-    const guidanceParts = []
-    if (orgPrompt && orgPrompt.trim()) guidanceParts.push(orgPrompt.trim())
-    if (userPrompt && userPrompt.trim()) guidanceParts.push(userPrompt.trim())
-    if (orgTopics.length) guidanceParts.push(`Emphasize these topics: ${orgTopics.join(', ')}`)
-    if (orgActionItems.length) guidanceParts.push(`Prioritize action items related to: ${orgActionItems.join(', ')}`)
-    const instructions = guidanceParts.join('\n')
-
-    const object = await summarizeTranscript(plain, instructions)
-    const sumPath = `summaries/${organizationId}/${sessionId}.json`
-    await uploadText(bucket, sumPath, JSON.stringify(object, null, 2), 'application/json')
-    let summaryEmbedding = null
-    const summaryText = (object?.summary || '').toString()
-    if (summaryText && summaryText.trim().length > 0) {
-      try {
-        const [vec] = await embedTexts([summaryText])
-        if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
-      } catch (e) {
-        console.warn('[worker] summary embedding failed', e?.message)
-      }
-    }
-    try {
-      await updateSession(sessionId, {
-        summary_text: summaryText,
-        structured_data: {
-          action_items: Array.isArray(object?.action_items) ? object.action_items : [],
-          topics: Array.isArray(object?.topics) ? object.topics : []
-        },
-        summary_embedding: summaryEmbedding
-      })
-    } catch (e) {
-      console.warn('[worker] failed to persist synthesis to sessions table', e?.message)
-    }
-    console.log('worker summarize done', { sessionId })
-  } catch (e) {
-    console.warn('worker summarize failed', e?.message)
-  }
-  try { await chunkingPromise } catch { }
-  await updateSession(sessionId, { status: 'ready' })
+  // Should not reach here; GCS path returns early, inline path finalizes and returns
 }
 
-async function recoverTranscription({ sessionId, organizationId, operationName, gcsUri }) {
-  console.log('[recoverTranscription] Attempting to recover', { sessionId, operationName })
+async function checkTranscriptionStatus({ sessionId, organizationId, operationName, gcsUri }) {
+  // console.log('[checkTranscription] Checking status', { sessionId, operationName })
 
   try {
     const speech = getSpeechClient()
@@ -309,13 +270,13 @@ async function recoverTranscription({ sessionId, organizationId, operationName, 
 
       progressInfo = parts.length > 0 ? ` (${parts.join(', ')})` : ''
 
-      console.log('[recoverTranscription] Raw metadata strings:', allStrings)
+      console.log('[checkTranscription] Raw metadata strings:', allStrings)
     }
 
-    console.log(`[recoverTranscription] Operation ${operationName} status: done=${op.done}${progressInfo}`)
+    console.log(`[checkTranscription] Operation ${operationName} status: done=${op.done}${progressInfo}`)
 
     if (op.done) {
-      console.log('[recoverTranscription] Operation completed, processing results')
+      console.log('[checkTranscription] Operation completed, processing results')
 
       // Use official helper to decode the long-running response
       let results = []
@@ -324,72 +285,31 @@ async function recoverTranscription({ sessionId, organizationId, operationName, 
         // decoded.result should contain LongRunningRecognizeResponse
         const response = decoded?.result || decoded?.latestResponse?.response || decoded
         results = Array.isArray(response?.results) ? response.results : []
-        console.log('[recoverTranscription] Decoded results segments:', results.length)
+        console.log('[checkTranscription] Decoded results segments:', results.length)
       } catch (e) {
-        console.error('[recoverTranscription] Failed to decode via checkLongRunningRecognizeProgress:', e?.message)
+        console.error('[checkTranscription] Failed to decode via checkLongRunningRecognizeProgress:', e?.message)
         results = []
       }
 
-      console.log('[recoverTranscription] Results', results)
+      console.log('[checkTranscription] Results', results)
 
       const text = results.map(r => r.alternatives?.[0]?.transcript || '').filter(Boolean).join(' ').trim()
 
-      console.log("[recoverTranscription] recovered text length:", text.length)
-      console.log("[recoverTranscription] recovered text preview:", text.substring(0, 200) + '...')
+      console.log("[checkTranscription] text length:", text.length)
+      console.log("[checkTranscription] text preview:", text.substring(0, 200) + '...')
 
-      // Store transcript and raw results
-      const bucket = 'copilot.sh'
-      const transcriptPath = `transcripts/${organizationId}/${sessionId}.txt`
-      const entry = `_TIMESTAMP_${new Date().toISOString()}|${text}\n`
-      await uploadText(bucket, transcriptPath, entry)
-
-      const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
-      await uploadText(bucket, rawResultsPath, JSON.stringify(results, null, 2), 'application/json')
-
-      await updateSession(sessionId, {
-        transcript_storage_path: transcriptPath,
-        raw_transcript_path: rawResultsPath,
-        gcs_operation_name: null,
-        gcs_audio_uri: null
-      })
-
-      // Continue with summarization...
-      try {
-        let userPrompt = ''
-        try {
-          const supa = supabaseService()
-          const { data: row } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
-          userPrompt = (row?.summary_prompt || '').toString()
-        } catch { }
-
-        const plain = (entry || '').split('\n').map(line => {
-          if (line.startsWith('_TIMESTAMP_')) {
-            const idx = line.indexOf('|'); return idx > -1 ? line.slice(idx + 1) : line
-          }
-          return line
-        }).join('\n').trim()
-
-        const object = await summarizeTranscript(plain, userPrompt)
-        const sumPath = `summaries/${organizationId}/${sessionId}.json`
-        await uploadText(bucket, sumPath, JSON.stringify(object, null, 2), 'application/json')
-        console.log('[recoverTranscription] summarize done', { sessionId, object })
-      } catch (e) {
-        console.warn('[recoverTranscription] summarize failed', e?.message)
-      }
-
-      await updateSession(sessionId, { status: 'ready' })
+      await finalizeTranscription({ sessionId, organizationId, text, results })
       return true
-
     } else {
-      console.log('[recoverTranscription] Operation still running, continuing to wait')
+      // console.log('[checkTranscription] Operation still running, continuing to wait')
       return false
     }
 
   } catch (error) {
-    console.error('[recoverTranscription] Failed to recover:', error.message)
+    console.error('[checkTranscription] Status check failed:', error.message)
     await updateSession(sessionId, {
       status: 'error',
-      error_message: `Recovery failed: ${error.message}`,
+      error_message: `Transcription status check failed: ${error.message}`,
       gcs_operation_name: null,
       gcs_audio_uri: null
     })
@@ -464,7 +384,7 @@ async function pollTranscribingSessions() {
       .eq('status', 'transcribing')
       .limit(50)
 
-    console.log(`[recovery] Found ${allTranscribing?.length || 0} total transcribing sessions`)
+    console.log(`[transcribe] Found ${allTranscribing?.length || 0} total transcribing sessions`)
 
     if (allTranscribing && allTranscribing.length > 0) {
       // console.log(`[recovery] Session details:`, allTranscribing.map(s => ({
@@ -487,21 +407,21 @@ async function pollTranscribingSessions() {
         const alreadyRunning = oldStuckSessions.filter(s => runningSessions.has(s.id))
 
         if (alreadyRunning.length > 0) {
-          console.log(`[recovery] ${alreadyRunning.length} sessions already being processed: ${alreadyRunning.map(s => s.id).join(', ')}`)
+          console.log(`[transcribe] ${alreadyRunning.length} sessions already being processed: ${alreadyRunning.map(s => s.id).join(', ')}`)
         }
 
 
         for (const session of sessionsToReprocess) {
-          console.log(`[recovery] Starting reprocessing for session ${session.id}`)
+          console.log(`[transcribe] Starting reprocessing for session ${session.id}`)
           runningSessions.add(session.id)
 
             // Try to reprocess the session from audio files
             ; (async () => {
               try {
                 await processSession({ sessionId: session.id, organizationId: session.organization_id })
-                console.log(`[recovery] Successfully reprocessed session ${session.id}`)
+                console.log(`[transcribe] Successfully reprocessed session ${session.id}`)
               } catch (e) {
-                console.error(`[recovery] Failed to reprocess session ${session.id}:`, e?.message)
+                console.error(`[transcribe] Failed to reprocess session ${session.id}:`, e?.message)
                 try {
                   await updateSession(session.id, {
                     status: 'error',
@@ -526,33 +446,33 @@ async function pollTranscribingSessions() {
 
     if (!stuckSessions || stuckSessions.length === 0) return
 
-    console.log(`[recovery] Found ${stuckSessions.length} sessions with operation names to check`)
+    console.log(`[transcribe] Found ${stuckSessions.length} sessions with operation names to check`)
 
     for (const session of stuckSessions) {
       if (transcribingSessions.has(session.id)) continue // Already being handled
 
       transcribingSessions.add(session.id)
-        // Handle recovery asynchronously
+        // Handle status checks asynchronously
         ; (async () => {
           try {
-            const recovered = await recoverTranscription({
+            const completed = await checkTranscriptionStatus({
               sessionId: session.id,
               organizationId: session.organization_id,
               operationName: session.gcs_operation_name,
               gcsUri: session.gcs_audio_uri
             })
-            if (recovered) {
-              console.log(`[recovery] Successfully recovered session ${session.id}`)
+            if (completed) {
+              console.log(`[transcribe] Transcription completed for session ${session.id}`)
             }
           } catch (e) {
-            console.error(`[recovery] Failed to recover session ${session.id}:`, e?.message)
+            console.error(`[transcribe] Transcription check failed for session ${session.id}:`, e?.message)
           } finally {
             transcribingSessions.delete(session.id)
           }
         })()
     }
   } catch (e) {
-    console.warn('[recovery] poll error', e?.message)
+    console.warn('[transcribe] poll error', e?.message)
   }
 }
 

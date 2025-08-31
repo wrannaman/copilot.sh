@@ -16,7 +16,7 @@ export async function POST(req) {
     }
 
     // Use Google Generative AI provider for embeddings (single value path)
-    const model = google.textEmbedding(process.env.EMBEDDING_MODEL_ID || 'gemini-embedding-001')
+    const model = google.textEmbedding(process.env.EMBEDDING_MODEL_ID || 'text-embedding-004')
     const all = []
     for (const value of clean) {
       try {
