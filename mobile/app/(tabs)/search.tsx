@@ -3,6 +3,7 @@ import { View, TextInput, Pressable, Text, FlatList, ActivityIndicator, Alert } 
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { getSupabase } from '@/lib/supabase';
+import ParallaxScrollView from '@/components/ParallaxScrollView';
 
 type SearchResult = {
   session_id: string;
@@ -89,67 +90,69 @@ export default function SearchScreen() {
     }
   }, []);
 
-  const renderItem = ({ item }: { item: SearchResult }) => (
-    <View className="border border-gray-200 dark:border-zinc-800 rounded-lg p-3 mb-2">
-      <View className="flex-row items-center justify-between mb-1">
-        <ThemedText className="text-sm text-gray-500 dark:text-gray-400">
-          {item.session_title || 'Untitled Session'}
-        </ThemedText>
-        <ThemedText className="text-xs text-gray-400">
-          {item.duration_seconds != null ? formatDuration(item.duration_seconds) : ''}
-        </ThemedText>
-      </View>
-      <Text className="text-foreground">{item.content}</Text>
-      <View className="flex-row items-center justify-between mt-2">
-        <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
-          {item.start_time_seconds != null ? `At ${formatDuration(item.start_time_seconds)}` : ''}
-        </ThemedText>
-        <Pressable onPress={() => onCopy(item.content)} className="px-3 py-1 rounded bg-zinc-900">
-          <ThemedText className="text-white text-xs">Copy</ThemedText>
-        </Pressable>
-      </View>
-    </View>
-  );
-
   return (
-    <FlatList
-      data={results}
-      keyExtractor={(it, idx) => `${it.session_id}-${idx}`}
-      renderItem={renderItem}
-      contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
-      ListHeaderComponent={(
-        <View>
-          <ThemedText type="title">Search</ThemedText>
-          <View className="flex-row items-center gap-2 mt-3">
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search conversations, topics, commitments..."
-              className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
-            />
-            <Pressable
-              onPress={onSearch}
-              disabled={!query.trim() || !organizationId || loading}
-              className={`h-10 px-3 rounded-lg items-center justify-center ${!query.trim() || !organizationId || loading ? 'bg-gray-300' : 'bg-zinc-900'}`}
-            >
-              {loading ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff">Search</ThemedText>
-              )}
-            </Pressable>
-          </View>
-          {!loading && hasSearched && results.length === 0 ? (
-            <ThemedText className="text-gray-500 dark:text-gray-400 mt-4">No results</ThemedText>
-          ) : null}
-          {loading ? (
-            <View className="mt-6 items-center justify-center">
-              <ActivityIndicator />
-            </View>
-          ) : null}
+    <ParallaxScrollView
+      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
+      headerImage={<ThemedView />}
+    >
+      <ThemedView className="gap-3">
+        <ThemedText type="title">Search</ThemedText>
+        <View className="flex-row items-center gap-2 mt-3">
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search conversations, topics, commitments..."
+            className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
+          />
+          <Pressable
+            onPress={onSearch}
+            disabled={!query.trim() || !organizationId || loading}
+            className={`h-10 px-3 rounded-lg items-center justify-center ${!query.trim() || !organizationId || loading ? 'bg-gray-300' : 'bg-zinc-900'}`}
+          >
+            {loading ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <ThemedText lightColor="#ffffff" darkColor="#ffffff">Search</ThemedText>
+            )}
+          </Pressable>
         </View>
-      )}
-    />
+
+        {!loading && hasSearched && results.length === 0 ? (
+          <ThemedText className="text-gray-500 dark:text-gray-400 mt-4">No results</ThemedText>
+        ) : null}
+        {loading ? (
+          <View className="mt-6 items-center justify-center">
+            <ActivityIndicator />
+          </View>
+        ) : null}
+
+        {results.length > 0 ? (
+          <View className="mt-2">
+            {results.map((item, idx) => (
+              <View key={`${item.session_id}-${idx}`} className="border border-gray-200 dark:border-zinc-800 rounded-lg p-3 mb-2">
+                <View className="flex-row items-center justify-between mb-1">
+                  <ThemedText className="text-sm text-gray-500 dark:text-gray-400">
+                    {item.session_title || 'Untitled Session'}
+                  </ThemedText>
+                  <ThemedText className="text-xs text-gray-400">
+                    {item.duration_seconds != null ? formatDuration(item.duration_seconds) : ''}
+                  </ThemedText>
+                </View>
+                <Text className="text-foreground">{item.content}</Text>
+                <View className="flex-row items-center justify-between mt-2">
+                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
+                    {item.start_time_seconds != null ? `At ${formatDuration(item.start_time_seconds)}` : ''}
+                  </ThemedText>
+                  <Pressable onPress={() => onCopy(item.content)} className="px-3 py-1 rounded bg-zinc-900">
+                    <ThemedText className="text-white text-xs">Copy</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </ThemedView>
+    </ParallaxScrollView>
   );
 }
 
