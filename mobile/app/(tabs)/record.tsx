@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, View, ActivityIndicator, TextInput } from 'react-native';
+import { Alert, Pressable, View, ActivityIndicator, TextInput, Animated, Easing } from 'react-native';
 import { Redirect } from 'expo-router';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
@@ -52,19 +52,31 @@ function RecordScreenInner() {
   const isNativeRecorderActiveRef = useRef<boolean>(false);
   const nextSendAtRef = useRef<number>(0);
   const uiTickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [sendCountdownMs, setSendCountdownMs] = useState(0);
-  const CHUNK_INTERVAL_MS = 60000; // 60s
+  // countdown removed from UI (state removed)
+  // const [sendCountdownMs, setSendCountdownMs] = useState(0);
+  const CHUNK_INTERVAL_MS = 5000; // 5s to match web/stateless approach
   const chunkDirRef = useRef<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
-  const [finalizeProcessed, setFinalizeProcessed] = useState<number | null>(null);
-  const [finalizeTotal, setFinalizeTotal] = useState<number | null>(null);
+  // finalize progress not shown to user; retain states if needed later
+  // Finalize progress hidden in UI; no explicit progress tracking
   const [summaryText, setSummaryText] = useState<string>('');
   const [actionItems, setActionItems] = useState<string[]>([]);
   const finalizePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [lastSessionId, setLastSessionId] = useState<string | null>(null);
+  // lastSessionId kept in ref only
   const lastSessionIdRef = useRef<string | null>(null);
+  const [title, setTitle] = useState<string>('');
   const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [events, setEvents] = useState<any[]>([]);
+  const [eventsLoading, setEventsLoading] = useState<boolean>(false);
+  const orgIdRef = useRef<string | null>(null);
+  // Pulse animation for record button
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const pulseLoopRef = useRef<any>(null);
+  // Internal counters removed from UI; keep only refs if needed later
+  // const [sentCount, setSentCount] = useState<number>(0);
+  // const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  // const [nowTick, setNowTick] = useState<number>(0);
 
   const ensureChunkDirAsync = useCallback(async () => {
     try {
@@ -90,6 +102,32 @@ function RecordScreenInner() {
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
   useEffect(() => { isSendingRef.current = isSending; }, [isSending]);
 
+  // Drive a subtle pulse while recording
+  useEffect(() => {
+    if (isRecording) {
+      try { pulseLoopRef.current?.stop?.(); } catch { }
+      pulseAnim.setValue(0);
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        ])
+      );
+      pulseLoopRef.current = loop;
+      loop.start();
+    } else {
+      try { pulseLoopRef.current?.stop?.(); } catch { }
+      pulseLoopRef.current = null;
+    }
+    return () => {
+      try { pulseLoopRef.current?.stop?.(); } catch { }
+      pulseLoopRef.current = null;
+    };
+  }, [isRecording, pulseAnim]);
+
+  const pulseScale = useMemo(() => pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] }), [pulseAnim]);
+  const pulseOpacity = useMemo(() => pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.35] }), [pulseAnim]);
+
   const audioRecorder = useAudioRecorder({
     extension: '.m4a',
     sampleRate: 16000,
@@ -102,6 +140,9 @@ function RecordScreenInner() {
     console.log('[rec] status', status);
   });
   const recorderState = useAudioRecorderState(audioRecorder);
+  const audioRecorderRef = useRef<any>(null);
+  useEffect(() => { audioRecorderRef.current = audioRecorder; }, [audioRecorder]);
+  const stopInProgressRef = useRef<boolean>(false);
 
   const apiBaseUrl = useMemo(() => (globalThis as any).__COPILOT_API_BASE_URL__ || 'http://localhost:3000', []);
 
@@ -113,6 +154,37 @@ function RecordScreenInner() {
         setIsAuthed(!!data?.session);
       } finally {
         setAuthChecked(true);
+      }
+    })();
+  }, []);
+
+  // Load nearby calendar events for quick title fill
+  useEffect(() => {
+    (async () => {
+      try {
+        const supabase = getSupabase();
+        const { data: sess } = await supabase.auth.getSession();
+        if (!sess?.session) return;
+        const { data: orgs, error: orgErr } = await supabase.rpc('my_organizations');
+        const orgId = (!orgErr && Array.isArray(orgs) && orgs.length > 0) ? String(orgs[0].org_id) : null;
+        orgIdRef.current = orgId;
+        if (!orgId) return;
+        setEventsLoading(true);
+        const now = Date.now();
+        const min = new Date(now - 15 * 60 * 1000).toISOString();
+        const max = new Date(now + 2 * 60 * 60 * 1000).toISOString();
+        const { data: evs, error } = await supabase
+          .from('calendar_events')
+          .select('id,title,starts_at,ends_at')
+          .eq('organization_id', orgId)
+          .gte('starts_at', min)
+          .lte('starts_at', max)
+          .order('starts_at', { ascending: true })
+          .limit(5);
+        if (!error && Array.isArray(evs)) setEvents(evs);
+      } catch { }
+      finally {
+        setEventsLoading(false);
       }
     })();
   }, []);
@@ -132,10 +204,13 @@ function RecordScreenInner() {
 
   // No local STT in MVP
 
-  const sendChunk = useCallback(async (uri: string) => {
+  type QueuedUpload = { uri: string; seq: number };
+
+  const sendChunk = useCallback(async (item: QueuedUpload) => {
     try {
       setIsSending(true);
-      console.log('[session] sending chunk', { uri });
+      const { uri, seq } = item;
+      console.log('[session] sending chunk', { uri, seq });
       const currentSessionId = sessionIdRef.current;
       if (!currentSessionId) throw new Error('No active session');
       const supabase = getSupabase();
@@ -151,8 +226,8 @@ function RecordScreenInner() {
       // @ts-ignore RN FormData file
       form.append('chunk', { uri, name: filename, type });
       form.append('mimeType', type);
-      form.append('seq', String(seqRef.current));
-      console.log('[rec] POST', `${apiBaseUrl}/api/sessions/${currentSessionId}/chunk`, { filename, type, seq: seqRef.current });
+      form.append('seq', String(seq));
+      console.log('[rec] POST', `${apiBaseUrl}/api/sessions/${currentSessionId}/chunk`, { filename, type, seq });
       const res = await fetch(`${apiBaseUrl}/api/sessions/${currentSessionId}/chunk`, {
         method: 'POST',
         headers: {
@@ -176,16 +251,71 @@ function RecordScreenInner() {
           ...prev.slice(0, 9)
         ]);
       }
-      // Increment seq after successful upload
-      seqRef.current = seqRef.current + 1;
-      console.log('[session] chunk saved');
+      // seq was assigned at enqueue time to ensure monotonic order
+      // diagnostics removed from UI
+      // saved successfully
     } catch (e: any) {
+      const msg = String(e?.message || '').toLowerCase();
       console.log('[session] upload failed', e?.message);
+      if (msg.includes('no active session')) {
+        // Stop recording immediately if session is missing
+        try { await stopRecordingImmediately(); } catch { }
+      }
       Alert.alert('Error', e?.message || 'Failed to save');
     } finally {
       setIsSending(false);
     }
   }, [apiBaseUrl, stopRecordingImmediately]);
+
+  // Serialize uploads to guarantee unique seq per part and avoid duplicates
+  const uploadQueueRef = useRef<QueuedUpload[]>([]);
+  const isUploadingRef = useRef<boolean>(false);
+  const seenMd5Ref = useRef<Set<string>>(new Set());
+
+  const processUploadQueue = useCallback(async () => {
+    if (isUploadingRef.current) return;
+    isUploadingRef.current = true;
+    try {
+      while (uploadQueueRef.current.length > 0) {
+        const nextItem = uploadQueueRef.current.shift() as QueuedUpload;
+        // Basic retry loop
+        let attempt = 0;
+        // Mark UI sending
+        setIsSending(true);
+        for (; attempt < 3; attempt++) {
+          try {
+            await sendChunk(nextItem);
+            break;
+          } catch {
+            await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+          }
+        }
+        setIsSending(false);
+      }
+    } finally {
+      isUploadingRef.current = false;
+    }
+  }, [sendChunk]);
+
+  const enqueueUpload = useCallback(async (uri: string | null) => {
+    if (!uri) return;
+    // Compute md5 to avoid duplicates
+    try {
+      const info = await FileSystem.getInfoAsync(uri, { md5: true } as any);
+      const md5 = String((info as any)?.md5 || '');
+      if (md5 && seenMd5Ref.current.has(md5)) {
+        console.log('[queue] skip duplicate by md5', md5);
+        return;
+      }
+      if (md5) seenMd5Ref.current.add(md5);
+    } catch { }
+    // Assign a unique seq for this file at enqueue time
+    const seqForThis = seqRef.current;
+    seqRef.current = seqRef.current + 1;
+    uploadQueueRef.current.push({ uri, seq: seqForThis });
+    // Kick processor
+    processUploadQueue().catch(() => { });
+  }, [processUploadQueue]);
 
   // No text sending in MVP
 
@@ -197,15 +327,20 @@ function RecordScreenInner() {
         return Alert.alert('Microphone denied');
       }
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
-      // Create session first
+      // Create session first (include optional title/prompt)
       const supabase = getSupabase();
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token || '';
+      const payload: any = {};
+      if (title && title.trim()) payload.title = title.trim();
+      if (customPrompt && customPrompt.trim()) payload.summary_prompt = customPrompt.trim();
       const createRes = await fetch(`${apiBaseUrl}/api/sessions`, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
+        body: JSON.stringify(payload),
       });
       const created = await createRes.json().catch(() => ({}));
       if (createRes.status === 401 || created?.message === 'Unauthorized') {
@@ -216,20 +351,22 @@ function RecordScreenInner() {
       }
       sessionIdRef.current = created.session_id;
       seqRef.current = 0;
+      try { seenMd5Ref.current.clear(); } catch { }
 
       // Drive explicit 10s chunks using a simple stop→send→restart loop
       const getRecordingUri = (): string | null => {
-        const rAny: any = audioRecorder as any;
-        const direct = (audioRecorder as any)?.uri || rAny?.url || (recorderState as any)?.url;
+        const rAny: any = audioRecorderRef.current as any;
+        const direct = (audioRecorderRef.current as any)?.uri || rAny?.url || (recorderState as any)?.url;
         return typeof direct === 'string' && direct.length > 0 ? direct : null;
       };
 
       const startChunk = async () => {
         try {
+          if (stopInProgressRef.current) return;
           console.log('[rec] prepareToRecordAsync…');
-          await audioRecorder.prepareToRecordAsync();
+          await audioRecorderRef.current?.prepareToRecordAsync();
           console.log('[rec] record()');
-          audioRecorder.record();
+          audioRecorderRef.current?.record();
           isNativeRecorderActiveRef.current = true;
         } catch (e: any) {
           console.log('[rec] startChunk error', e?.message);
@@ -238,12 +375,18 @@ function RecordScreenInner() {
 
       const stopAndSendChunk = async () => {
         try {
+          if (!isNativeRecorderActiveRef.current) return;
+          if (stopInProgressRef.current) return;
+          stopInProgressRef.current = true;
           console.log('[rec] stop()…');
-          await audioRecorder.stop();
+          await audioRecorderRef.current?.stop();
           isNativeRecorderActiveRef.current = false;
           const uri = getRecordingUri();
           console.log('[rec] stopped uri', uri);
           let finalUri: string | null = uri;
+          // Immediately restart recording to avoid gaps
+          await startChunk();
+          // Copy and send old chunk in background
           try {
             if (uri) {
               const info = await FileSystem.getInfoAsync(uri);
@@ -258,26 +401,22 @@ function RecordScreenInner() {
           } catch (e: any) {
             console.log('[rec] copy failed', e?.message);
           }
-          // Restart recording after we safely copied the finished file
-          await startChunk();
-          // Send copied chunk in background
           if (finalUri) {
-            sendChunk(finalUri).catch(() => { });
+            await enqueueUpload(finalUri);
           } else {
             console.log('[rec] no uri after stop');
           }
         } catch (e: any) {
           console.log('[rec] stopAndSendChunk error', e?.message);
+        } finally {
+          stopInProgressRef.current = false;
         }
       };
 
       const driveLoop = async () => {
         if (!isRecordingRef.current) return;
-        if (!isNativeRecorderActiveRef.current) {
-          await startChunk();
-        } else {
-          await stopAndSendChunk();
-        }
+        // Stop current and send previous buffer while immediately restarting recording
+        await stopAndSendChunk();
         if (!isRecordingRef.current) return;
         nextSendAtRef.current = Date.now() + CHUNK_INTERVAL_MS;
         cloudChunkTimeoutRef.current = setTimeout(driveLoop, CHUNK_INTERVAL_MS) as any;
@@ -290,16 +429,14 @@ function RecordScreenInner() {
       cloudChunkTimeoutRef.current = setTimeout(driveLoop, CHUNK_INTERVAL_MS) as any;
       // UI ticker for countdown
       if (uiTickerRef.current) try { clearInterval(uiTickerRef.current as any); } catch { }
-      uiTickerRef.current = setInterval(() => {
-        if (!isRecordingRef.current) return;
-        const remaining = Math.max(0, (nextSendAtRef.current || 0) - Date.now());
-        setSendCountdownMs(remaining);
-      }, 200) as any;
+      // countdown ticker removed
+      // ticker removed
+      uiTickerRef.current = setInterval(() => { }, 1000) as any;
     } catch (e: any) {
       console.log('[rec] start error', e?.message);
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
-  }, [audioRecorder, recorderState, isRecording, sendChunk, apiBaseUrl, ensureChunkDirAsync]);
+  }, [recorderState, isRecording, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload]);
 
   const stopAndFlush = useCallback(async () => {
     if (cloudChunkTimeoutRef.current) {
@@ -311,16 +448,21 @@ function RecordScreenInner() {
       uiTickerRef.current = null;
     }
     nextSendAtRef.current = 0;
-    setSendCountdownMs(0);
+    // countdown reset removed
     setIsRecording(false);
     try {
+      if (stopInProgressRef.current) {
+        // best-effort: wait briefly for in-flight stop
+        await new Promise(r => setTimeout(r, 150));
+      }
       console.log('[rec] manual stop()');
-      await audioRecorder.stop();
+      try { await audioRecorderRef.current?.stop(); } catch { }
       console.log('[rec] stopped uri', audioRecorder.uri);
       const rAny: any = audioRecorder as any;
       const uri = (audioRecorder as any)?.uri || rAny?.url || (recorderState as any)?.url;
       if (uri) {
-        await sendChunk(uri as string);
+        // Route final chunk through the same queue to ensure MD5 dedupe and monotonic seq
+        await enqueueUpload(uri as string);
       }
     } catch { }
     // Call stop on the session
@@ -342,19 +484,14 @@ function RecordScreenInner() {
         }
         // Retain last session id for finalize/summarize
         lastSessionIdRef.current = sid;
-        setLastSessionId(sid);
+
+        // Do not auto finalize; user will trigger Finalize & Summarize
       }
     } catch { }
-    // reset session refs
-    sessionIdRef.current = null;
-    seqRef.current = 0;
-  }, [audioRecorder, recorderState, sendChunk, apiBaseUrl]);
+    // Do not reset session refs here; allow queue to finish uploading final chunk(s)
+  }, [audioRecorder, recorderState, enqueueUpload, apiBaseUrl]);
 
-  const onReset = useCallback(() => {
-    // Clear UI
-    setRecentTranscripts([]);
-    console.log('[reset] cleared recent transcripts');
-  }, []);
+  // Reset button removed for simpler UX
 
   if (!authChecked) {
     return (
@@ -394,36 +531,52 @@ function RecordScreenInner() {
           ) : (
             <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-2">Idle</ThemedText>
           )}
-          {isRecording ? (
-            <ThemedText className="text-gray-500 dark:text-gray-400 mt-1">
-              Next send in {Math.ceil(sendCountdownMs / 1000)}s
-            </ThemedText>
-          ) : null}
+          {/* Countdown hidden for simpler UI */}
         </View>
 
-        <View className="mt-4 flex-row items-center justify-end">
-          <Pressable
-            onPress={onReset}
-            className="h-10 px-3 border border-gray-200 rounded-lg items-center justify-center mr-2 bg-white dark:bg-zinc-900 dark:border-zinc-800"
-            accessibilityLabel={'Reset'}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="refresh" size={20} color="#374151" />
-          </Pressable>
-        </View>
+        {/* Reset removed */}
 
         {/* No preview buffer; live snippets appear below */}
 
-        {/* Finalize & Summarize controls */}
+        {/* Finalize & Summarize (manual trigger) */}
         {!isRecording ? (
           <View className="mt-3 gap-2">
-            <ThemedText className="text-gray-500 dark:text-gray-400 text-xs">Custom summary prompt</ThemedText>
+            <ThemedText className="text-gray-500 dark:text-gray-400 text-xs">Session title (optional)</ThemedText>
+            <View className="flex-row items-center gap-2">
+              <TextInput
+                value={title}
+                onChangeText={setTitle}
+                placeholder="Weekly sync with team"
+                className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
+              />
+            </View>
+            <View className="flex-row flex-wrap gap-2 items-center">
+              {eventsLoading ? (
+                <ThemedText className="text-xs text-gray-500 dark:text-gray-400">Loading events…</ThemedText>
+              ) : (events && events.length > 0 ? (
+                events.map((ev) => (
+                  <Pressable
+                    key={ev.id}
+                    onPress={() => setTitle(ev.title || '')}
+                    className="px-2 py-1 rounded border border-gray-200 dark:border-zinc-800"
+                  >
+                    <ThemedText className="text-xs">{(ev.title || 'Untitled')} · {new Date(ev.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</ThemedText>
+                  </Pressable>
+                ))
+              ) : (
+                <ThemedText className="text-xs text-gray-500 dark:text-gray-400">No upcoming events</ThemedText>
+              ))}
+            </View>
+
+            <ThemedText className="text-gray-500 dark:text-gray-400 text-xs">AI Summary Instructions (optional)</ThemedText>
             <TextInput
               value={customPrompt}
               onChangeText={setCustomPrompt}
-              placeholder="e.g., Focus on decisions, owners, and dates."
+              placeholder="Summarize action items and decisions, highlight blockers."
               className="border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
+              multiline
             />
+
             <View className="flex-row items-center justify-between">
               <Pressable
                 onPress={async () => {
@@ -435,13 +588,20 @@ function RecordScreenInner() {
                     }
                     if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
                     setIsFinalizing(true);
-                    setFinalizeProcessed(null);
-                    setFinalizeTotal(null);
+                    // no progress displayed
                     setSummaryText('');
                     setActionItems([]);
                     const supabase = getSupabase();
                     const { data: sessionData } = await supabase.auth.getSession();
                     const accessToken = sessionData?.session?.access_token || '';
+                    // Update title/prompt just in case
+                    if ((title && title.trim()) || (customPrompt && customPrompt.trim())) {
+                      fetch(`${apiBaseUrl}/api/sessions/${sid}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                        body: JSON.stringify({ title: title?.trim() || null, summary_prompt: customPrompt?.trim() || null }),
+                      }).catch(() => { });
+                    }
                     // Kick off finalize once
                     await fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
                       method: 'POST',
@@ -454,15 +614,11 @@ function RecordScreenInner() {
                           headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
                         });
                         const statusJson = await statusRes.json().catch(() => ({}));
-                        const parts = Number(statusJson?.parts || 0);
-                        const processed = Number(statusJson?.processed || 0);
-                        setFinalizeProcessed(processed);
-                        setFinalizeTotal(parts || null);
                         const ready = String(statusJson?.status || '').toLowerCase() === 'ready';
-                        if (ready || (parts > 0 && processed >= parts)) {
+                        if (ready) {
                           if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
                           setIsFinalizing(false);
-                          // Summarize
+                          // Summarize with prompt
                           setIsSummarizing(true);
                           const body: any = customPrompt && customPrompt.trim() ? { prompt: customPrompt.trim() } : {};
                           const sumRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/summarize`, {
@@ -497,21 +653,19 @@ function RecordScreenInner() {
                     Alert.alert('Error', e?.message || 'Finalize failed');
                   }
                 }}
-                disabled={isRecording || isFinalizing || isSummarizing || !lastSessionId}
-                className={`h-10 px-3 rounded-lg items-center justify-center ${isRecording || isFinalizing || isSummarizing || !lastSessionId ? 'bg-gray-300' : 'bg-zinc-900'}`}
+                disabled={isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
+                className={`h-10 px-3 rounded-lg items-center justify-center ${isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current ? 'bg-gray-300' : 'bg-zinc-900'} text-white dark:text-gray-50`}
                 accessibilityLabel={'Finalize & Summarize'}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <ThemedText className="text-white">{isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}</ThemedText>
+                <ThemedText className="text-white">
+                  {isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}
+                </ThemedText>
               </Pressable>
-              <View>
-                {isFinalizing && finalizeTotal != null && finalizeProcessed != null ? (
-                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">Processed {finalizeProcessed}/{finalizeTotal}</ThemedText>
-                ) : null}
-              </View>
             </View>
+
             {summaryText ? (
-              <View className="mt-2 gap-1 border border-gray-200 dark:border-zinc-800 rounded-lg p-2">
+              <View className="mt-1 gap-1 border border-gray-200 dark:border-zinc-800 rounded-lg p-2">
                 <ThemedText type="defaultSemiBold">Summary</ThemedText>
                 <ThemedText>{summaryText}</ThemedText>
                 {actionItems && actionItems.length > 0 ? (
