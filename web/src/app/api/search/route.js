@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient as createServiceClient } from '@/utils/supabase/server';
+import { createServiceClient } from '@/utils/supabase/server';
 import { embedTexts } from '@/server/ai/embedding';
 
 export async function POST(req) {
