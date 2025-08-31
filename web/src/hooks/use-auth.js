@@ -36,6 +36,17 @@ export const useAuthStore = create((set, get) => ({
   setLoading: (loading) => set({ loading }),
   setOrganizations: (organizations) => set({ organizations }),
   setCurrentOrganization: (org) => set({ currentOrganization: org }),
+  refreshAuth: async () => {
+    try {
+      const supabase = getSupabaseClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      set({ user: user || null })
+      return user
+    } catch (e) {
+      console.error('❌ refreshAuth failed:', e)
+      return null
+    }
+  },
 
   signInWithGoogle: async () => {
     const supabase = getSupabaseClient()

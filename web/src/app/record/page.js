@@ -61,10 +61,12 @@ function RecordContent() {
         // Get devices
         const all = await navigator.mediaDevices.enumerateDevices();
         const mics = all.filter(d => d.kind === 'audioinput');
-        setDevices(mics);
+        // Filter out microphones labeled as "virtual"
+        const physicalMics = mics.filter(d => !((d.label || '').toLowerCase().includes('virtual')));
+        setDevices(physicalMics);
 
         // Auto-select CMTECK
-        const cmteck = mics.find(d => d.label.toLowerCase().includes('cmteck'));
+        const cmteck = physicalMics.find(d => d.label.toLowerCase().includes('cmteck'));
         if (cmteck) {
           setSelectedDeviceId(cmteck.deviceId);
           setPreferredDeviceId(cmteck.deviceId);

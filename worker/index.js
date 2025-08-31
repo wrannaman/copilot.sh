@@ -152,13 +152,23 @@ async function processSession({ sessionId, organizationId }) {
     raw_transcript_path: rawResultsPath
   })
 
-  // Summarize in worker (long-running safe). Respect optional summary_prompt from DB
+  // Summarize in worker (long-running safe). Respect org-level prefs and optional per-session summary_prompt
   try {
     let userPrompt = ''
+    let orgPrompt = ''
+    let orgTopics = []
+    let orgActionItems = []
     try {
       const supa = supabaseService()
       const { data: row } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
       userPrompt = (row?.summary_prompt || '').toString()
+    } catch { }
+    try {
+      const supa = supabaseService()
+      const { data: org } = await supa.from('org').select('settings').eq('id', organizationId).maybeSingle()
+      if (org?.settings?.summary_prefs?.prompt) orgPrompt = String(org.settings.summary_prefs.prompt)
+      if (Array.isArray(org?.settings?.summary_prefs?.topics)) orgTopics = org.settings.summary_prefs.topics
+      if (Array.isArray(org?.settings?.summary_prefs?.action_items)) orgActionItems = org.settings.summary_prefs.action_items
     } catch { }
     const plain = (entry || '')
       .split('\n')
@@ -170,7 +180,14 @@ async function processSession({ sessionId, organizationId }) {
       })
       .join('\n')
       .trim()
-    const object = await summarizeTranscript(plain, userPrompt)
+    const guidanceParts = []
+    if (orgPrompt && orgPrompt.trim()) guidanceParts.push(orgPrompt.trim())
+    if (userPrompt && userPrompt.trim()) guidanceParts.push(userPrompt.trim())
+    if (orgTopics.length) guidanceParts.push(`Emphasize these topics: ${orgTopics.join(', ')}`)
+    if (orgActionItems.length) guidanceParts.push(`Prioritize action items related to: ${orgActionItems.join(', ')}`)
+    const instructions = guidanceParts.join('\n')
+
+    const object = await summarizeTranscript(plain, instructions)
     const sumPath = `summaries/${organizationId}/${sessionId}.json`
     await uploadText(bucket, sumPath, JSON.stringify(object, null, 2), 'application/json')
     console.log('worker summarize done', { sessionId, object })

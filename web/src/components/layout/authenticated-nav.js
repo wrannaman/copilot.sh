@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/mode-toggle";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { usePathname } from "next/navigation";
 import { NavUser } from "./nav-user";
 
@@ -19,8 +25,6 @@ export function AuthenticatedNav() {
     { href: "/dashboard", label: "Dashboard" },
     { href: "/record", label: "Record" },
     { href: "/sessions", label: "Sessions" },
-    { href: "/integrations", label: "Integrations" },
-    { href: "/team", label: "Team" },
   ];
 
   return (
@@ -29,7 +33,7 @@ export function AuthenticatedNav() {
         <div className="flex items-center gap-6">
           <Link href="/dashboard" className="text-lg font-semibold text-foreground mr-4">
             <span className="inline-flex items-center gap-2">
-              <img src="/favicon.ico" alt="Copilot.sh" className="h-6 w-6" />
+              <img src="/favicon.ico" alt="Copilot.sh" className="h-6 w-6 rounded-full" />
               <span>Copilot.sh</span>
             </span>
           </Link>
@@ -46,6 +50,30 @@ export function AuthenticatedNav() {
                 {link.label}
               </Link>
             ))}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-8 px-2 text-sm font-medium text-muted-foreground hover:text-primary">
+                  More
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <Link href="/integrations">
+                  <DropdownMenuItem>
+                    Integrations
+                  </DropdownMenuItem>
+                </Link>
+                <Link href="/settings">
+                  <DropdownMenuItem>
+                    Settings
+                  </DropdownMenuItem>
+                </Link>
+                <Link href="/team">
+                  <DropdownMenuItem>
+                    Team
+                  </DropdownMenuItem>
+                </Link>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </nav>
         </div>
         <div className="flex items-center gap-4">

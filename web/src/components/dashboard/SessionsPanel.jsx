@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
@@ -12,32 +13,41 @@ import { RotateCcw, Loader2 } from "lucide-react";
 export default function SessionsPanel({ organizationId }) {
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [selectedSession, setSelectedSession] = useState(null);
   const [retryingSession, setRetryingSession] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsSummary, setDetailsSummary] = useState(null);
   const [detailsTranscript, setDetailsTranscript] = useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const loadSessions = useCallback(async () => {
     if (!organizationId) return;
     const supabase = createClient();
+    const pageSize = 10;
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = startIndex + pageSize; // request one extra to detect next page
     const { data, error } = await supabase
       .from('sessions')
       .select('id,title,status,created_at,transcript_storage_path')
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .range(startIndex, endIndex);
     if (!error && Array.isArray(data)) {
-      setSessions(data);
+      const hasMore = data.length > pageSize;
+      setHasNextPage(hasMore);
+      setSessions(hasMore ? data.slice(0, pageSize) : data);
     }
-  }, [organizationId]);
+  }, [organizationId, page]);
 
   useEffect(() => {
     if (!organizationId) return;
     setSessionsLoading(true);
     loadSessions().finally(() => setSessionsLoading(false));
-  }, [organizationId, loadSessions]);
+  }, [organizationId, page, loadSessions]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -46,6 +56,21 @@ export default function SessionsPanel({ organizationId }) {
     }, 5000);
     return () => clearInterval(id);
   }, [organizationId, loadSessions]);
+
+  useEffect(() => {
+    // Reset to first page when org changes
+    setPage(1);
+  }, [organizationId]);
+
+  // Open by query param (?open=ID)
+  useEffect(() => {
+    const toOpen = searchParams?.get('open');
+    if (!toOpen || !Array.isArray(sessions) || sessions.length === 0) return;
+    const s = sessions.find(x => String(x.id) === String(toOpen));
+    if (s) {
+      openDetails(s);
+    }
+  }, [searchParams, sessions]);
 
   async function openTranscript(session) {
     setSelectedSession(session);
@@ -86,6 +111,8 @@ export default function SessionsPanel({ organizationId }) {
     setDetailsLoading(true);
     setDetailsSummary(null);
     setDetailsTranscript("");
+    // Push query param for deep-linking
+    try { router.push(`/sessions?open=${session.id}`); } catch { }
     try {
       // Fetch transcript from API (diarized/log-style if available)
       try {
@@ -263,11 +290,42 @@ export default function SessionsPanel({ organizationId }) {
             </TableBody>
           </Table>
         </div>
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">10 per page</div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={sessionsLoading || page === 1}
+            >
+              Previous
+            </Button>
+            <div className="text-sm text-muted-foreground">Page {page}</div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => p + 1)}
+              disabled={sessionsLoading || !hasNextPage}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
       </CardContent>
 
       {/* Transcript-only dialog removed */}
 
-      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+      <Dialog
+        open={detailsOpen}
+        onOpenChange={(open) => {
+          setDetailsOpen(open);
+          if (!open) {
+            // Clear query param back to /sessions
+            try { router.replace('/sessions'); } catch { }
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>{selectedSession?.title || 'Session Details'}</DialogTitle>

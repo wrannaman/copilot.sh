@@ -301,24 +301,14 @@ function DashboardContent() {
               </div>
             </div>
           </div>
-
-          {/* Metrics removed for simplicity */}
-
-
-
           {/* Main Content */}
           <div className="space-y-6">
             <SearchComponent />
-
-
-
-            {/* Text Ingest */}
-            <div className="w-full max-w-4xl mx-auto">
+            {/* Text Ingest - hidden for now but want to keeep */}
+            {/* <div className="w-full max-w-4xl mx-auto">
               <TextIngestCard />
-            </div>
+            </div> */}
           </div>
-
-
         </div>
       </main>
     </div>

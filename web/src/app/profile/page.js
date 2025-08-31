@@ -9,7 +9,7 @@ import { FileUpload } from '@/components/ui/file-upload';
 import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 
 
-const API_URL = ""
+const API_URL = "/api"
 
 function ProfilePage() {
   const { toast } = useToast();
@@ -20,8 +20,11 @@ function ProfilePage() {
 
   useEffect(() => {
     if (user) {
-      setFirstName(user.first_name || '');
-      setLastName(user.last_name || '');
+      const meta = user.user_metadata || {}
+      const first = user.first_name || meta.first_name || meta.given_name || (meta.name ? meta.name.split(' ')[0] : '') || ''
+      const last = user.last_name || meta.last_name || meta.family_name || (meta.name ? meta.name.split(' ').slice(1).join(' ') : '') || ''
+      setFirstName(first);
+      setLastName(last);
     }
   }, [user]);
 
@@ -33,7 +36,6 @@ function ProfilePage() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
         },
         body: JSON.stringify({ first_name: firstName, last_name: lastName }),
       });
@@ -42,7 +44,9 @@ function ProfilePage() {
         throw new Error('Failed to update profile.');
       }
 
-      await refreshAuth();
+      if (typeof refreshAuth === 'function') {
+        await refreshAuth();
+      }
 
       toast.success('Success', {
         description: 'Your profile has been updated.',
@@ -62,7 +66,6 @@ function ProfilePage() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
         },
         body: JSON.stringify({ avatar: fileInfo.url }),
       });

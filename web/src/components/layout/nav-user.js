@@ -29,11 +29,14 @@ export function NavUser() {
   const { user, logout } = useAuth();
 
   const getInitials = () => {
-    if (user?.first_name && user?.last_name) {
-      return `${user.first_name[0]}${user.last_name[0]}`;
+    const meta = user?.user_metadata || {}
+    const first = user?.first_name || meta.first_name || meta.given_name || (meta.name ? meta.name.split(' ')[0] : '')
+    const last = user?.last_name || meta.last_name || meta.family_name || (meta.name ? meta.name.split(' ').slice(1).join(' ') : '')
+    if (first && last) {
+      return `${first[0]}${last[0]}`;
     }
-    if (user?.first_name) {
-      return user.first_name[0];
+    if (first) {
+      return first[0];
     }
     if (user?.email) {
       return user.email[0];
@@ -42,8 +45,10 @@ export function NavUser() {
   }
 
   const getAvatarUrl = () => {
-    if (user?.avatar?.startsWith('http')) {
-      return user.avatar;
+    const meta = user?.user_metadata || {}
+    const url = user?.avatar || meta.avatar || meta.avatar_url || meta.picture
+    if (typeof url === 'string' && url.startsWith('http')) {
+      return url
     }
     return undefined;
   }
@@ -57,7 +62,7 @@ export function NavUser() {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-8 w-8 rounded-full">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={getAvatarUrl()} alt={user.first_name || user.email} />
+            <AvatarImage src={getAvatarUrl()} alt={(user?.user_metadata?.first_name || user?.first_name || user?.email || 'User')} />
             <AvatarFallback>{getInitials()}</AvatarFallback>
           </Avatar>
         </Button>
@@ -65,7 +70,7 @@ export function NavUser() {
       <DropdownMenuContent className="w-56" align="end" forceMount>
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{`${user.first_name || ''} ${user.last_name || ''}`.trim()}</p>
+            <p className="text-sm font-medium leading-none">{`${(user?.user_metadata?.first_name || user?.first_name || '')} ${(user?.user_metadata?.last_name || user?.last_name || '')}`.trim()}</p>
             <p className="text-xs leading-none text-muted-foreground">
               {user.email}
             </p>

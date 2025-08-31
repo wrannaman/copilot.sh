@@ -69,10 +69,32 @@ export async function POST(request, { params }) {
       } catch { }
     }
 
+    // Load org-level preferences (default prompt/topics/action_items)
+    let orgPrompt = ''
+    let orgTopics = []
+    let orgActionItems = []
+    try {
+      const { data: org } = await supabase
+        .from('org')
+        .select('settings')
+        .eq('id', session.organization_id)
+        .maybeSingle()
+      if (org?.settings?.summary_prefs?.prompt) orgPrompt = String(org.settings.summary_prefs.prompt)
+      if (Array.isArray(org?.settings?.summary_prefs?.topics)) orgTopics = org.settings.summary_prefs.topics
+      if (Array.isArray(org?.settings?.summary_prefs?.action_items)) orgActionItems = org.settings.summary_prefs.action_items
+    } catch { }
+
+    const userGuidanceParts = []
+    if (customPrompt && customPrompt.trim()) userGuidanceParts.push(customPrompt.trim())
+    if (orgPrompt && orgPrompt.trim()) userGuidanceParts.push(orgPrompt.trim())
+    if (orgTopics.length) userGuidanceParts.push(`Emphasize these topics: ${orgTopics.join(', ')}`)
+    if (orgActionItems.length) userGuidanceParts.push(`Prioritize action items related to: ${orgActionItems.join(', ')}`)
+    const userGuidance = userGuidanceParts.join('\n')
+
     const { object } = await generateObject({
       model: google(process.env.SUMMARY_MODEL_ID || 'gemini-2.5-flash'),
       schema,
-      prompt: `${customPrompt && customPrompt.trim() ? customPrompt.trim() + '\n\n' : ''}You are an executive meeting summarizer. Produce a concise 5-10 sentence summary and a crisp list of action items. Use neutral tone, avoid fluff, and prefer concrete details. If noisy or repetitive text exists, de-duplicate.
+      prompt: `${userGuidance ? userGuidance + '\n\n' : ''}You are an executive meeting summarizer. Produce a concise 5-10 sentence summary and a crisp list of action items. Use neutral tone, avoid fluff, and prefer concrete details. If noisy or repetitive text exists, de-duplicate.
 
 TRANSCRIPT:
 ${plain.slice(0, 120_000)}

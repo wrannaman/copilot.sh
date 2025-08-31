@@ -4,6 +4,8 @@ import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter'
 import { Document } from '@langchain/core/documents'
 import { PromptTemplate } from '@langchain/core/prompts'
 
+export const DEFAULT_USER_PREFERENCES = 'Focus on concrete information, decisions, and actionable items.'
+
 export async function summarizeTranscript(text, instructions = '') {
   // Handle very short transcripts
   if (!text || text.trim().length < 100) {
@@ -40,7 +42,7 @@ You are an executive meeting summarizer. Analyze this transcript chunk and extra
 2. Action items and commitments
 3. Important topics/themes
 
-USER PREFERENCES: ${instructions || 'Focus on concrete information, decisions, and actionable items.'}
+USER PREFERENCES: ${instructions || DEFAULT_USER_PREFERENCES}
 
 TRANSCRIPT CHUNK:
 {text}
@@ -51,7 +53,7 @@ Provide a structured summary focusing on factual content, decisions made, and an
     const combinePrompt = PromptTemplate.fromTemplate(`
 You are summarizing a meeting transcript. Combine these chunk summaries into a final comprehensive summary.
 
-USER PREFERENCES: ${instructions || 'Focus on concrete information, decisions, and actionable items.'}
+USER PREFERENCES: ${instructions || DEFAULT_USER_PREFERENCES}
 
 CHUNK SUMMARIES:
 {text}
