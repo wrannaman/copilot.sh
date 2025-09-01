@@ -42,7 +42,7 @@ function HomeContent() {
         <section className="container mx-auto px-6 py-20 text-center">
           <div className="max-w-4xl mx-auto">
             <h2 className="text-5xl md:text-6xl font-bold text-foreground mb-6 tracking-tight">
-              🪩 Your AI memory for sales calls.
+              🪩 Your AI memory for work calls.
             </h2>
             <p className="text-xl md:text-2xl text-foreground font-semibold leading-relaxed">
               Stop wasting hours on call notes. <span className="font-bold">Copilot.sh</span> records your conversations and turns them into actionable summaries ready for your CRM. Open‑source, private, and no bots required.
@@ -58,7 +58,7 @@ function HomeContent() {
                 </Link>
               </Button>
               <Button size="lg" variant="outline" asChild className="text-lg px-8 py-6">
-                <a href="https://github.com/copilotsh/copilot.sh" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+                <a href="https://github.com/wrannaman/copilot.sh" target="_blank" rel="noopener noreferrer">View on GitHub</a>
               </Button>
             </div>
           </div>
