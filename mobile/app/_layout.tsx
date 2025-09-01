@@ -53,6 +53,14 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="sessions/[id]"
+          options={{
+            headerShown: true,
+            title: "Session Details",
+            headerBackTitle: "Sessions"
+          }}
+        />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />

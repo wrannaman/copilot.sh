@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,11 +16,16 @@ export default function SessionsPanel({ organizationId }) {
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [selectedSession, setSelectedSession] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [savingId, setSavingId] = useState(null);
   const [retryingSession, setRetryingSession] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsSummary, setDetailsSummary] = useState(null);
   const [detailsTranscript, setDetailsTranscript] = useState("");
+  const isUnmountedRef = useRef(false);
+  const pollTimeoutRef = useRef(null);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -56,7 +61,18 @@ export default function SessionsPanel({ organizationId }) {
     if (!organizationId) return;
     setSessionsLoading(true);
     loadSessions().finally(() => setSessionsLoading(false));
+    return () => { /* no-op mount effect cleanup */ };
   }, [organizationId, page, loadSessions]);
+
+  useEffect(() => {
+    return () => {
+      isUnmountedRef.current = true;
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     // Reset to first page when org changes
@@ -197,11 +213,46 @@ export default function SessionsPanel({ organizationId }) {
     }
   }
 
+  function startEdit(session) {
+    setEditingId(session.id)
+    setEditingTitle(session.title || '')
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditingTitle('')
+  }
+
+  async function saveTitle(sessionId) {
+    if (!editingTitle && editingTitle !== '') return cancelEdit()
+    setSavingId(sessionId)
+    const newTitle = editingTitle.trim().slice(0, 200)
+    // optimistic update
+    setSessions(prev => prev.map(x => x.id === sessionId ? { ...x, title: newTitle || null } : x))
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+      })
+      if (!resp.ok) {
+        // revert on error
+        await loadSessions()
+      }
+    } catch (_) {
+      await loadSessions()
+    } finally {
+      setSavingId(null)
+      cancelEdit()
+    }
+  }
+
   async function pollSessionStatus(sessionId) {
     const maxAttempts = 30; // Poll for up to 1 minute
     let attempts = 0;
 
     const poll = async () => {
+      if (isUnmountedRef.current) return;
       try {
         const response = await fetch(`/api/sessions/${sessionId}/status`);
         if (response.ok) {
@@ -219,7 +270,8 @@ export default function SessionsPanel({ organizationId }) {
           if (data.status === 'uploaded' || data.status === 'transcribing') {
             attempts++;
             if (attempts < maxAttempts) {
-              setTimeout(poll, 2000);
+              if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+              pollTimeoutRef.current = setTimeout(poll, 2000);
             }
           }
         }
@@ -228,7 +280,8 @@ export default function SessionsPanel({ organizationId }) {
       }
     };
 
-    setTimeout(poll, 1000);
+    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+    pollTimeoutRef.current = setTimeout(poll, 1000);
   }
 
   return (
@@ -275,7 +328,46 @@ export default function SessionsPanel({ organizationId }) {
               ) : (
                 sessions.map(s => (
                   <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.title || 'Untitled'}</TableCell>
+                    <TableCell className="font-medium">
+                      {editingId === s.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            className="border rounded px-2 py-1 text-sm w-full max-w-[360px]"
+                            value={editingTitle}
+                            onChange={(e) => setEditingTitle(e.target.value)}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveTitle(s.id)
+                              if (e.key === 'Escape') cancelEdit()
+                            }}
+                          />
+                          <button
+                            className="inline-flex items-center justify-center h-8 w-8 rounded border text-xs"
+                            aria-label="Save"
+                            onClick={() => saveTitle(s.id)}
+                            disabled={savingId === s.id}
+                          >
+                            ✓
+                          </button>
+                          <button
+                            className="inline-flex items-center justify-center h-8 w-8 rounded border text-xs"
+                            aria-label="Cancel"
+                            onClick={cancelEdit}
+                            disabled={savingId === s.id}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="text-left hover:underline"
+                          onClick={() => startEdit(s)}
+                          title="Click to edit title"
+                        >
+                          {s.title || 'Untitled'}
+                        </button>
+                      )}
+                    </TableCell>
                     <TableCell>{new Date(s.created_at).toLocaleString()}</TableCell>
                     <TableCell className="capitalize">{s.status}</TableCell>
                     <TableCell className="text-right">

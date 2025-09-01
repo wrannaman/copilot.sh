@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, TextInput, View, ActivityIndicator } from 'react-native';
+import { Alert, StyleSheet, TextInput, View, ActivityIndicator, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
@@ -145,57 +145,94 @@ export default function SettingsScreen() {
   if (!isAuthed) return <Redirect href="/login" />;
 
   return (
-    <ParallaxScrollView headerBackgroundColor={{ light: '#fff', dark: '#000' }} headerImage={<ThemedView />}>
-      <ThemedView style={styles.container}>
-        <ThemedText type="title">Settings</ThemedText>
+    <ParallaxScrollView
+      headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
+      headerImage={
+        <View className="flex-1 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 dark:from-gray-900 dark:via-orange-900 dark:to-red-900" />
+      }
+    >
+      <ThemedView className="gap-6">
+        <View className="items-center">
+          <ThemedText type="title" className="text-gray-900 dark:text-white">Settings</ThemedText>
+          <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-1">
+            Configure your app settings
+          </ThemedText>
+        </View>
 
-        <View style={styles.field}>
-          <ThemedText type="defaultSemiBold">API Base URL</ThemedText>
-          <TextInput
-            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
-            placeholder="https://your-deploy.example.com"
-            placeholderTextColor={inputColors.placeholder}
-            value={apiBaseUrl}
-            onChangeText={setApiBaseUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-700/50">
+          <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Server Configuration</ThemedText>
+
+          <View className="gap-4">
+            <View className="gap-2">
+              <ThemedText className="text-gray-700 dark:text-gray-300 font-medium">API Base URL</ThemedText>
+              <TextInput
+                className="border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50"
+                placeholder="https://your-deploy.example.com"
+                placeholderTextColor={inputColors.placeholder}
+                value={apiBaseUrl}
+                onChangeText={setApiBaseUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View className="gap-2">
+              <ThemedText className="text-gray-700 dark:text-gray-300 font-medium">Supabase URL</ThemedText>
+              <TextInput
+                className="border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50"
+                placeholder="https://xxx.supabase.co"
+                placeholderTextColor={inputColors.placeholder}
+                value={sbUrl}
+                onChangeText={setSbUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View className="gap-2">
+              <ThemedText className="text-gray-700 dark:text-gray-300 font-medium">Supabase Anon Key</ThemedText>
+              <TextInput
+                className="border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50"
+                placeholder="paste anon key"
+                placeholderTextColor={inputColors.placeholder}
+                value={sbAnon}
+                onChangeText={setSbAnon}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+            </View>
+          </View>
         </View>
-        {/* Device Key removed for mobile app - users authenticate via Supabase */}
-        <View style={styles.field}>
-          <ThemedText type="defaultSemiBold">Supabase URL</ThemedText>
-          <TextInput
-            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
-            placeholder="https://xxx.supabase.co"
-            placeholderTextColor={inputColors.placeholder}
-            value={sbUrl}
-            onChangeText={setSbUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+
+        <View className="gap-3">
+          <Pressable
+            onPress={save}
+            disabled={saving}
+            className={`w-full px-6 py-4 rounded-xl items-center justify-center shadow-md ${saving
+                ? 'bg-gray-300 dark:bg-gray-600'
+                : 'bg-gradient-to-r from-green-600 to-green-700 dark:from-green-500 dark:to-green-600'
+              }`}
+          >
+            <View className="flex-row items-center">
+              {saving && (
+                <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+              )}
+              <ThemedText className="text-white font-semibold text-base">
+                {saving ? 'Saving…' : 'Save Settings'}
+              </ThemedText>
+            </View>
+          </Pressable>
+
+          <Pressable
+            onPress={signOut}
+            className="w-full px-6 py-4 rounded-xl items-center justify-center shadow-md bg-gradient-to-r from-red-500 to-red-600"
+          >
+            <ThemedText className="text-white font-semibold text-base">
+              Sign Out
+            </ThemedText>
+          </Pressable>
         </View>
-        <View style={styles.field}>
-          <ThemedText type="defaultSemiBold">Supabase Anon Key</ThemedText>
-          <TextInput
-            style={[styles.input, { borderColor: inputColors.borderColor, backgroundColor: inputColors.backgroundColor, color: inputColors.textColor }]}
-            placeholder="paste anon key"
-            placeholderTextColor={inputColors.placeholder}
-            value={sbAnon}
-            onChangeText={setSbAnon}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        <Button onPress={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-        <Button
-          onPress={signOut}
-          style={{ backgroundColor: '#dc2626', width: '100%', marginTop: 8 }}
-          textColor="#ffffff"
-        >
-          Sign out
-        </Button>
       </ThemedView>
     </ParallaxScrollView>
   );

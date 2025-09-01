@@ -158,103 +158,114 @@ export default function LoginScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-white dark:bg-gray-900">
+    <ScrollView className="flex-1 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <View className="flex-1 justify-center px-8 py-12 min-h-screen">
         {/* Logo Section */}
         <View className="items-center mb-16">
-          <Image
-            source={require('@/assets/images/icon.png')}
-            className="w-32 h-32 mb-8 pb-2"
-            style={{ borderRadius: 0, marginTop: 32, height: 84, width: 89, marginBottom: 2 }}
-          />
-          <Text className="text-5xl font-bold text-black dark:text-white mb-3 text-center">
+          <View className="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/30 mb-8">
+            <Image
+              source={require('@/assets/images/icon.png')}
+              className="w-20 h-20"
+              style={{ height: 80, width: 80 }}
+            />
+          </View>
+          <Text className="text-5xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-300 text-center mb-3">
             copilot.sh
           </Text>
-          <Text className="text-lg text-gray-600 dark:text-gray-400 text-center">
+          <Text className="text-lg text-gray-600 dark:text-gray-400 text-center font-medium">
             Always-on meeting recorder
           </Text>
         </View>
 
         {/* Sign In Section */}
-        <View className="items-center mb-2">
-          <Text className="text-2xl font-semibold text-gray-800 dark:text-gray-200 text-center mb-10">
-            Sign in
+        <View className="items-center mb-8">
+          <Text className="text-2xl font-semibold text-gray-800 dark:text-gray-200 text-center mb-2">
+            Welcome back
+          </Text>
+          <Text className="text-gray-500 dark:text-gray-400 text-center">
+            Sign in to continue recording
           </Text>
         </View>
 
         {/* Form */}
-        <View className="gap-6">
-          <View className="gap-3">
-            <Text className="text-gray-700 dark:text-gray-300 font-semibold text-base">
-              Email (magic link)
-            </Text>
-            <TextInput
-              className="border border-gray-300 dark:border-gray-600 p-4 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-base"
-              style={{ borderRadius: 12 }}
-              placeholder="you@company.com"
-              placeholderTextColor="#999999"
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-          </View>
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-6 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/30 backdrop-blur-sm">
+          <View className="gap-6">
+            <View className="gap-3">
+              <Text className="text-gray-700 dark:text-gray-300 font-semibold text-base">
+                Email (magic link)
+              </Text>
+              <TextInput
+                className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base shadow-sm"
+                style={{ borderRadius: 16 }}
+                placeholder="you@company.com"
+                placeholderTextColor="#999999"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+              />
+            </View>
 
-          <Pressable
-            onPress={signInWithMagicLink}
-            disabled={loading || !email.trim()}
-            className={`w-full p-4 ${loading || !email.trim() ? 'bg-gray-400 dark:bg-gray-600' : 'bg-gray-800 dark:bg-gray-700'}`}
-            style={{ borderRadius: 12 }}
-          >
-            <Text className="text-white text-center font-semibold text-base">
-              {loading ? 'Sending…' : 'Send magic link'}
-            </Text>
-          </Pressable>
-
-          <View className="items-center my-6">
-            <Text className="text-gray-500 dark:text-gray-400 text-center font-medium">
-              Or continue with
-            </Text>
-          </View>
-
-          <View className="gap-4">
             <Pressable
-              onPress={() => signInWithProvider('google')}
-              disabled={loading}
-              className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 p-4 w-full"
-              style={{ borderRadius: 12 }}
+              onPress={signInWithMagicLink}
+              disabled={loading || !email.trim()}
+              className={`w-full p-4 shadow-lg ${loading || !email.trim() ? 'bg-gray-400 dark:bg-gray-600' : 'bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600'}`}
+              style={{ borderRadius: 16 }}
             >
-              <View className="flex-row items-center justify-center">
-                <AntDesign name="google" size={22} color="#4285F4" style={{ marginRight: 12 }} />
-                <Text className="text-gray-900 dark:text-white font-semibold text-base">
-                  Continue with Google
-                </Text>
-              </View>
+              <Text className="text-white text-center font-semibold text-base">
+                {loading ? 'Sending…' : 'Send magic link'}
+              </Text>
             </Pressable>
 
-            {appleAvailable ? (
-              <AppleAuthentication.AppleAuthenticationButton
-                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                cornerRadius={12}
-                style={{ width: '100%', height: 52 }}
-                onPress={() => signInWithProvider('apple')}
-              />
-            ) : (
+            <View className="items-center my-6">
+              <View className="flex-row items-center w-full">
+                <View className="flex-1 h-px bg-gray-200 dark:bg-gray-600" />
+                <Text className="text-gray-500 dark:text-gray-400 text-center font-medium px-4">
+                  Or continue with
+                </Text>
+                <View className="flex-1 h-px bg-gray-200 dark:bg-gray-600" />
+              </View>
+            </View>
+
+            <View className="gap-4">
               <Pressable
-                onPress={() => signInWithProvider('apple')}
+                onPress={() => signInWithProvider('google')}
                 disabled={loading}
-                className="bg-black dark:bg-gray-900 p-4 w-full"
-                style={{ borderRadius: 12 }}
+                className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 p-4 w-full shadow-md"
+                style={{ borderRadius: 16 }}
               >
                 <View className="flex-row items-center justify-center">
-                  <Ionicons name="logo-apple" size={22} color="#ffffff" style={{ marginRight: 12 }} />
-                  <Text className="text-white font-semibold text-base">
-                    Sign in with Apple
+                  <AntDesign name="google" size={22} color="#4285F4" style={{ marginRight: 12 }} />
+                  <Text className="text-gray-900 dark:text-white font-semibold text-base">
+                    Continue with Google
                   </Text>
                 </View>
               </Pressable>
-            )}
+
+              {appleAvailable ? (
+                <AppleAuthentication.AppleAuthenticationButton
+                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                  cornerRadius={16}
+                  style={{ width: '100%', height: 52, shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }}
+                  onPress={() => signInWithProvider('apple')}
+                />
+              ) : (
+                <Pressable
+                  onPress={() => signInWithProvider('apple')}
+                  disabled={loading}
+                  className="bg-black dark:bg-gray-900 p-4 w-full shadow-md"
+                  style={{ borderRadius: 16 }}
+                >
+                  <View className="flex-row items-center justify-center">
+                    <Ionicons name="logo-apple" size={22} color="#ffffff" style={{ marginRight: 12 }} />
+                    <Text className="text-white font-semibold text-base">
+                      Sign in with Apple
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
       </View>

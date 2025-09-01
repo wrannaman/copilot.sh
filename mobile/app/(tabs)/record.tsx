@@ -567,13 +567,14 @@ function RecordScreenInner() {
         // Check if it's a valid file with content
         const info = await FileSystem.getInfoAsync(finalUri);
         console.log('[rec] final chunk file info:', info);
-        if (info.exists && info.size && info.size > 50) { // Lowered threshold to catch smaller chunks
-          console.log('[rec] final chunk has', info.size, 'bytes - uploading');
+        const fileSize = (info as any).size || 0;
+        if (info.exists && fileSize > 50) { // Lowered threshold to catch smaller chunks
+          console.log('[rec] final chunk has', fileSize, 'bytes - uploading');
           console.log('[rec] calling enqueueUpload for final chunk...');
           await enqueueUpload(finalUri as string);
           console.log('[rec] enqueueUpload completed for final chunk');
         } else {
-          console.log('[rec] final chunk too small (', info.size, 'bytes) - but trying anyway');
+          console.log('[rec] final chunk too small (', fileSize, 'bytes) - but trying anyway');
           await enqueueUpload(finalUri as string);
         }
       } catch (e: any) {
@@ -626,20 +627,32 @@ function RecordScreenInner() {
 
   return (
     <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={<ThemedView />}
+      headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
+      headerImage={
+        <View className="flex-1 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-slate-900 dark:to-blue-900" />
+      }
     >
-      <ThemedView className="gap-3">
-        <ThemedText type="title">Recorder</ThemedText>
-        <View className="mt-4 items-center justify-center">
-          <View className="h-24 w-24 items-center justify-center">
+      <ThemedView className="gap-6">
+        <View className="items-center">
+          <ThemedText type="title" className="text-gray-900 dark:text-white">Recorder</ThemedText>
+          <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-1">
+            Tap to start recording your session
+          </ThemedText>
+        </View>
+
+        <View className="mt-8 items-center justify-center">
+          <View className="h-32 w-32 items-center justify-center relative">
+            {/* Outer ring for visual enhancement */}
+            <View className={`absolute h-32 w-32 rounded-full border-2 ${isRecording ? 'border-red-200 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`} />
+
+            {/* Pulse animation */}
             {isRecording ? (
               <Animated.View
                 pointerEvents="none"
                 style={{
                   position: 'absolute',
-                  height: 96,
-                  width: 96,
+                  height: 140,
+                  width: 140,
                   borderRadius: 9999,
                   backgroundColor: '#ef4444',
                   opacity: pulseOpacity as any,
@@ -647,186 +660,230 @@ function RecordScreenInner() {
                 }}
               />
             ) : null}
+
+            {/* Main button with shadow and gradient */}
             <Pressable
               onPress={isRecording ? stopAndFlush : startRecording}
-              className={`h-24 w-24 rounded-full items-center justify-center ${isRecording ? 'bg-red-600' : 'bg-zinc-900'}`}
+              className={`h-24 w-24 rounded-full items-center justify-center shadow-lg ${isRecording
+                ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30'
+                : 'bg-gradient-to-br from-white to-gray-100 dark:from-gray-700 dark:to-gray-800 shadow-gray-900/30 border-2 border-gray-200 dark:border-gray-600'
+                }`}
               accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               style={{ zIndex: 1 }}
             >
               {isRecording ? (
-                <Ionicons name="stop" size={36} color="#ffffff" />
+                <Ionicons name="stop" size={32} color="#ffffff" />
               ) : (
-                <Ionicons name="mic" size={36} color="#ffffff" />
+                <Ionicons name="mic" size={32} color="#374151" />
               )}
             </Pressable>
           </View>
-          {isRecording ? (
-            <ThemedText className="text-green-600 font-semibold text-center mt-2">● Recording</ThemedText>
-          ) : isSending ? (
-            <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-2">Saving…</ThemedText>
-          ) : (
-            <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-2">Idle</ThemedText>
-          )}
-          {/* Countdown hidden for simpler UI */}
+
+          {/* Status indicator with better styling */}
+          <View className="mt-6 items-center">
+            {isRecording ? (
+              <View className="flex-row items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-full">
+                <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
+                <ThemedText className="text-green-700 dark:text-green-400 font-medium">Recording</ThemedText>
+              </View>
+            ) : isSending ? (
+              <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
+                <ActivityIndicator size="small" color="#3b82f6" />
+                <ThemedText className="text-blue-700 dark:text-blue-400 font-medium ml-2">Saving…</ThemedText>
+              </View>
+            ) : (
+              <View className="flex-row items-center bg-gray-50 dark:bg-gray-800/50 px-4 py-2 rounded-full">
+                <View className="w-2 h-2 bg-gray-400 rounded-full mr-2" />
+                <ThemedText className="text-gray-600 dark:text-gray-400 font-medium">Ready to record</ThemedText>
+              </View>
+            )}
+          </View>
         </View>
 
         {/* Reset removed */}
 
         {/* No preview buffer; live snippets appear below */}
 
-        {/* Finalize & Summarize (manual trigger) */}
+        {/* Session Configuration */}
         {!isRecording ? (
-          <View className="mt-3 gap-2">
-            <ThemedText className="text-gray-500 dark:text-gray-400 text-xs">Session title (optional)</ThemedText>
-            <View className="flex-row items-center gap-2">
-              <TextInput
-                value={title}
-                onChangeText={setTitle}
-                placeholder="Weekly sync with team"
-                className="flex-1 border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
-              />
-            </View>
-            <View className="flex-row flex-wrap gap-2 items-center">
-              {eventsLoading ? (
-                <ThemedText className="text-xs text-gray-500 dark:text-gray-400">Loading events…</ThemedText>
-              ) : (events && events.length > 0 ? (
-                events.map((ev) => (
-                  <Pressable
-                    key={ev.id}
-                    onPress={() => setTitle(ev.title || '')}
-                    className="px-2 py-1 rounded border border-gray-200 dark:border-zinc-800"
-                  >
-                    <ThemedText className="text-xs">{(ev.title || 'Untitled')} · {new Date(ev.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</ThemedText>
-                  </Pressable>
-                ))
-              ) : (
-                <ThemedText className="text-xs text-gray-500 dark:text-gray-400">No upcoming events</ThemedText>
-              ))}
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-700/50">
+            <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Session Setup</ThemedText>
+
+            <View className="gap-4">
+              <View className="gap-2">
+                <ThemedText className="text-gray-700 dark:text-gray-300 font-medium text-sm">Session title (optional)</ThemedText>
+                <TextInput
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="Weekly sync with team"
+                  className="border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50"
+                />
+              </View>
+              <View className="gap-2">
+                <ThemedText className="text-gray-700 dark:text-gray-300 font-medium text-sm">Quick titles from calendar</ThemedText>
+                <View className="flex-row flex-wrap gap-2">
+                  {eventsLoading ? (
+                    <View className="flex-row items-center bg-gray-50 dark:bg-gray-700 px-3 py-1.5 rounded-lg">
+                      <ActivityIndicator size="small" color="#6b7280" />
+                      <ThemedText className="text-xs text-gray-500 dark:text-gray-400 ml-2">Loading events…</ThemedText>
+                    </View>
+                  ) : (events && events.length > 0 ? (
+                    events.map((ev) => (
+                      <Pressable
+                        key={ev.id}
+                        onPress={() => setTitle(ev.title || '')}
+                        className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-3 py-1.5 rounded-lg"
+                      >
+                        <ThemedText className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                          {(ev.title || 'Untitled')} · {new Date(ev.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </ThemedText>
+                      </Pressable>
+                    ))
+                  ) : (
+                    <ThemedText className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 px-3 py-1.5 rounded-lg">
+                      No upcoming events
+                    </ThemedText>
+                  ))}
+                </View>
+              </View>
+
+              <View className="gap-2">
+                <ThemedText className="text-gray-700 dark:text-gray-300 font-medium text-sm">AI Summary Instructions (optional)</ThemedText>
+                <TextInput
+                  value={customPrompt}
+                  onChangeText={setCustomPrompt}
+                  placeholder="Summarize action items and decisions, highlight blockers."
+                  className="border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50 min-h-[80px]"
+                  multiline
+                  textAlignVertical="top"
+                />
+              </View>
             </View>
 
-            <ThemedText className="text-gray-500 dark:text-gray-400 text-xs">AI Summary Instructions (optional)</ThemedText>
-            <TextInput
-              value={customPrompt}
-              onChangeText={setCustomPrompt}
-              placeholder="Summarize action items and decisions, highlight blockers."
-              className="border border-gray-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-foreground"
-              multiline
-            />
-
-            <View className="flex-row items-center justify-between">
-              <Pressable
-                onPress={async () => {
-                  try {
-                    const sid = lastSessionIdRef.current;
-                    if (!sid) {
-                      Alert.alert('No session', 'Nothing to finalize.');
-                      return;
-                    }
-                    if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
-                    setIsFinalizing(true);
-                    // no progress displayed
-                    setSummaryText('');
-                    setActionItems([]);
-                    const supabase = getSupabase();
-                    const { data: sessionData } = await supabase.auth.getSession();
-                    const accessToken = sessionData?.session?.access_token || '';
-                    // Update title/prompt just in case
-                    if ((title && title.trim()) || (customPrompt && customPrompt.trim())) {
-                      fetch(`${apiBaseUrl}/api/sessions/${sid}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                        body: JSON.stringify({ title: title?.trim() || null, summary_prompt: customPrompt?.trim() || null }),
-                      }).catch(() => { });
-                    }
-                    // Kick off finalize once
-                    await fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
-                      method: 'POST',
-                      headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                    }).catch(() => { });
-                    // Poll status and nudge finalize
-                    finalizePollRef.current = setInterval(async () => {
-                      try {
-                        const statusRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/status`, {
-                          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                        });
-                        const statusJson = await statusRes.json().catch(() => ({}));
-                        const ready = String(statusJson?.status || '').toLowerCase() === 'ready';
-                        if (ready) {
-                          if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
-                          setIsFinalizing(false);
-                          // Summarize with prompt
-                          setIsSummarizing(true);
-                          const body: any = customPrompt && customPrompt.trim() ? { prompt: customPrompt.trim() } : {};
-                          const sumRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/summarize`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                            body: JSON.stringify(body),
-                          });
-                          const sumJson = await sumRes.json().catch(() => ({}));
-                          if (!sumRes.ok) {
-                            Alert.alert('Summarize failed', sumJson?.message || 'Please try again.');
-                          } else {
-                            const summary = String(sumJson?.summary || '').trim();
-                            const items = Array.isArray(sumJson?.action_items) ? sumJson.action_items.filter((s: any) => typeof s === 'string') : [];
-                            setSummaryText(summary);
-                            setActionItems(items);
-                          }
-                          setIsSummarizing(false);
-                        } else {
-                          // Nudge finalize again in background
-                          fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
-                            method: 'POST',
-                            headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                          }).catch(() => { });
-                        }
-                      } catch (e: any) {
-                        console.log('[finalize] poll error', e?.message);
-                      }
-                    }, 3000) as any;
-                  } catch (e: any) {
-                    setIsFinalizing(false);
-                    setIsSummarizing(false);
-                    Alert.alert('Error', e?.message || 'Finalize failed');
+            <Pressable
+              onPress={async () => {
+                try {
+                  const sid = lastSessionIdRef.current;
+                  if (!sid) {
+                    Alert.alert('No session', 'Nothing to finalize.');
+                    return;
                   }
-                }}
-                disabled={isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
-                className={`h-10 px-3 rounded-lg items-center justify-center ${isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current ? 'bg-gray-300' : 'bg-zinc-900'} text-white dark:text-gray-50`}
-                accessibilityLabel={'Finalize & Summarize'}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff">
+                  if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
+                  setIsFinalizing(true);
+                  // no progress displayed
+                  setSummaryText('');
+                  setActionItems([]);
+                  const supabase = getSupabase();
+                  const { data: sessionData } = await supabase.auth.getSession();
+                  const accessToken = sessionData?.session?.access_token || '';
+                  // Update title/prompt just in case
+                  if ((title && title.trim()) || (customPrompt && customPrompt.trim())) {
+                    fetch(`${apiBaseUrl}/api/sessions/${sid}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                      body: JSON.stringify({ title: title?.trim() || null, summary_prompt: customPrompt?.trim() || null }),
+                    }).catch(() => { });
+                  }
+                  // Kick off finalize once
+                  await fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
+                    method: 'POST',
+                    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                  }).catch(() => { });
+                  // Poll status and nudge finalize
+                  finalizePollRef.current = setInterval(async () => {
+                    try {
+                      const statusRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/status`, {
+                        headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                      });
+                      const statusJson = await statusRes.json().catch(() => ({}));
+                      const ready = String(statusJson?.status || '').toLowerCase() === 'ready';
+                      if (ready) {
+                        if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
+                        setIsFinalizing(false);
+                        // Summarize with prompt
+                        setIsSummarizing(true);
+                        const body: any = customPrompt && customPrompt.trim() ? { prompt: customPrompt.trim() } : {};
+                        const sumRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/summarize`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                          body: JSON.stringify(body),
+                        });
+                        const sumJson = await sumRes.json().catch(() => ({}));
+                        if (!sumRes.ok) {
+                          Alert.alert('Summarize failed', sumJson?.message || 'Please try again.');
+                        } else {
+                          const summary = String(sumJson?.summary || '').trim();
+                          const items = Array.isArray(sumJson?.action_items) ? sumJson.action_items.filter((s: any) => typeof s === 'string') : [];
+                          setSummaryText(summary);
+                          setActionItems(items);
+                        }
+                        setIsSummarizing(false);
+                      } else {
+                        // Nudge finalize again in background
+                        fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
+                          method: 'POST',
+                          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                        }).catch(() => { });
+                      }
+                    } catch (e: any) {
+                      console.log('[finalize] poll error', e?.message);
+                    }
+                  }, 3000) as any;
+                } catch (e: any) {
+                  setIsFinalizing(false);
+                  setIsSummarizing(false);
+                  Alert.alert('Error', e?.message || 'Finalize failed');
+                }
+              }}
+              disabled={isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
+              className={`mt-4 w-full px-6 py-4 rounded-xl items-center justify-center shadow-md ${isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current
+                ? 'bg-gray-300 dark:bg-gray-600'
+                : 'bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600'
+                }`}
+              accessibilityLabel={'Finalize & Summarize'}
+            >
+              <View className="flex-row items-center">
+                {(isFinalizing || isSummarizing) && (
+                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                )}
+                <ThemedText className="text-white font-semibold text-base">
                   {isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}
                 </ThemedText>
-              </Pressable>
-            </View>
+              </View>
+            </Pressable>
+          </View>
+        ) : null}
 
-            {summaryText ? (
-              <View className="mt-1 gap-1 border border-gray-200 dark:border-zinc-800 rounded-lg p-2">
-                <ThemedText type="defaultSemiBold">Summary</ThemedText>
-                <ThemedText>{summaryText}</ThemedText>
-                {actionItems && actionItems.length > 0 ? (
-                  <View className="mt-1">
-                    <ThemedText type="defaultSemiBold">Action items</ThemedText>
-                    {actionItems.map((it, idx) => (
-                      <ThemedText key={idx}>• {it}</ThemedText>
-                    ))}
+        {summaryText ? (
+          <View className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800 rounded-2xl p-4 shadow-sm">
+            <ThemedText className="text-lg font-semibold text-green-800 dark:text-green-300 mb-2">Summary</ThemedText>
+            <ThemedText className="text-green-700 dark:text-green-400 leading-relaxed">{summaryText}</ThemedText>
+            {actionItems && actionItems.length > 0 ? (
+              <View className="mt-3">
+                <ThemedText className="text-base font-semibold text-green-800 dark:text-green-300 mb-2">Action items</ThemedText>
+                {actionItems.map((it, idx) => (
+                  <View key={idx} className="flex-row items-start mb-1">
+                    <View className="w-1.5 h-1.5 bg-green-600 dark:bg-green-400 rounded-full mt-2 mr-2" />
+                    <ThemedText className="text-green-700 dark:text-green-400 flex-1">{it}</ThemedText>
                   </View>
-                ) : null}
+                ))}
               </View>
             ) : null}
           </View>
         ) : null}
 
         {recentTranscripts.length > 0 ? (
-          <View className="gap-1 mt-1">
-            <ThemedText type="defaultSemiBold">Recent transcripts</ThemedText>
-            {recentTranscripts.map((t) => (
-              <View key={t.seq} className="py-1.5 border-b border-gray-100 dark:border-zinc-800">
-                <ThemedText className="text-gray-500 dark:text-gray-400 text-xs mb-0.5">{t.timestamp}</ThemedText>
-                <ThemedText>{t.text}</ThemedText>
-              </View>
-            ))}
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50">
+            <ThemedText className="text-lg font-semibold mb-3 text-gray-900 dark:text-white">Live Transcription</ThemedText>
+            <View className="gap-3">
+              {recentTranscripts.map((t) => (
+                <View key={t.seq} className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-3 border-l-4 border-blue-500">
+                  <ThemedText className="text-blue-600 dark:text-blue-400 text-xs font-medium mb-1">{t.timestamp}</ThemedText>
+                  <ThemedText className="text-gray-800 dark:text-gray-200 leading-relaxed">{t.text}</ThemedText>
+                </View>
+              ))}
+            </View>
           </View>
         ) : null}
       </ThemedView>
