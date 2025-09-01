@@ -44,6 +44,7 @@ function RecordScreenInner() {
   const [recentTranscripts, setRecentTranscripts] = useState<{ seq: number; text: string; timestamp: string }[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
@@ -255,7 +256,9 @@ function RecordScreenInner() {
       }
       // seq was assigned at enqueue time to ensure monotonic order
       // diagnostics removed from UI
-      // saved successfully
+      // saved successfully - show celebration
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000); // Show for 2 seconds
     } catch (e: any) {
       const msg = String(e?.message || '').toLowerCase();
       console.log('[session] upload failed', e?.message);
@@ -681,7 +684,7 @@ function RecordScreenInner() {
           </View>
 
           {/* Status indicator with better styling */}
-          <View className="mt-6 items-center">
+          <View className="mt-12 items-center">
             {isRecording ? (
               <View className="flex-row items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-full">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
@@ -691,6 +694,11 @@ function RecordScreenInner() {
               <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
                 <ActivityIndicator size="small" color="#3b82f6" />
                 <ThemedText className="text-blue-700 dark:text-blue-400 font-medium ml-2">Saving…</ThemedText>
+              </View>
+            ) : justSaved ? (
+              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-6 py-3 rounded-full border-2 border-emerald-200 dark:border-emerald-800 shadow-lg">
+                <ThemedText className="text-2xl mr-2">✅</ThemedText>
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-bold text-lg">Saved!</ThemedText>
               </View>
             ) : (
               <View className="flex-row items-center bg-gray-50 dark:bg-gray-800/50 px-4 py-2 rounded-full">
