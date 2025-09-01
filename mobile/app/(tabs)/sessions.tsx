@@ -103,7 +103,7 @@ export default function SessionsScreen() {
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
       headerImage={
-        <View className="flex-1 bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-gray-900 dark:via-purple-900 dark:to-indigo-900" />
+        <View className="flex-1 bg-purple-50 dark:bg-gray-900" />
       }
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
@@ -116,8 +116,8 @@ export default function SessionsScreen() {
         </View>
 
         {loading ? (
-          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center shadow-sm border border-gray-100 dark:border-gray-700/50">
-            <ActivityIndicator size="large" color="#8b5cf6" />
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center  border border-gray-100 dark:border-gray-700/50">
+            <ActivityIndicator size="large" color="#10b981" />
             <ThemedText className="text-gray-600 dark:text-gray-400 mt-3 font-medium">Loading sessions...</ThemedText>
           </View>
         ) : null}
@@ -137,7 +137,7 @@ export default function SessionsScreen() {
             <Pressable
               key={s.id}
               onPress={() => router.push({ pathname: '/sessions/[id]', params: { id: s.id } })}
-              className="bg-white dark:bg-gray-800/50 rounded-xl p-3 shadow-sm border border-gray-100 dark:border-gray-700/50 active:scale-98 transition-transform"
+              className="bg-white dark:bg-gray-800/50 rounded-xl p-3  border border-gray-100 dark:border-gray-700/50 active:scale-98 transition-transform"
             >
               <View className="flex-row items-center">
                 <View className="flex-1">
@@ -182,17 +182,14 @@ export default function SessionsScreen() {
           ))}
         </View>
 
-        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50">
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4  border border-gray-100 dark:border-gray-700/50">
           <View className="flex-row items-center justify-between">
             <Pressable
               onPress={() => setPage(p => Math.max(1, p - 1))}
               disabled={loading || page === 1}
-              className={`px-4 py-2 rounded-xl shadow-sm ${loading || page === 1
-                ? 'bg-gray-200 dark:bg-gray-600'
-                : 'bg-gradient-to-r from-purple-600 to-purple-700 dark:from-purple-500 dark:to-purple-600'
-                }`}
+              className="px-4 py-2"
             >
-              <ThemedText className={`font-medium ${loading || page === 1 ? 'text-gray-500' : 'text-white'}`}>
+              <ThemedText className={`font-medium ${loading || page === 1 ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
                 ← Previous
               </ThemedText>
             </Pressable>
@@ -202,19 +199,16 @@ export default function SessionsScreen() {
             <Pressable
               onPress={() => setPage(p => p + 1)}
               disabled={loading || !hasNextPage}
-              className={`px-4 py-2 rounded-xl shadow-sm ${loading || !hasNextPage
-                ? 'bg-gray-200 dark:bg-gray-600'
-                : 'bg-gradient-to-r from-purple-600 to-purple-700 dark:from-purple-500 dark:to-purple-600'
-                }`}
+              className="px-4 py-2"
             >
-              <ThemedText className={`font-medium ${loading || !hasNextPage ? 'text-gray-500' : 'text-white'}`}>
+              <ThemedText className={`font-medium ${loading || !hasNextPage ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
                 Next →
               </ThemedText>
             </Pressable>
           </View>
         </View>
       </ThemedView>
-    </ParallaxScrollView>
+    </ParallaxScrollView >
   );
 }
 

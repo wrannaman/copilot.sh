@@ -156,7 +156,7 @@ export default function SettingsScreen() {
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
       headerImage={
-        <View className="flex-1 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 dark:from-gray-900 dark:via-orange-900 dark:to-red-900" />
+        <View className="flex-1 bg-orange-50 dark:bg-gray-900" />
       }
     >
       <ThemedView className="gap-6">
@@ -168,7 +168,7 @@ export default function SettingsScreen() {
         </View>
 
         {userEmail ? (
-          <View className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 border border-blue-100 dark:border-blue-800/50">
+          <View className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4 border border-emerald-100 dark:border-emerald-800/50">
             <View className="items-center">
               <ThemedText className="text-blue-700 dark:text-blue-300 font-medium">
                 Logged in as
@@ -180,7 +180,7 @@ export default function SettingsScreen() {
           </View>
         ) : null}
 
-        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-700/50">
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5  border border-gray-100 dark:border-gray-700/50">
           <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Server Configuration</ThemedText>
 
           <View className="gap-4">
@@ -230,16 +230,16 @@ export default function SettingsScreen() {
           <Pressable
             onPress={save}
             disabled={saving}
-            className={`w-full px-6 py-4 rounded-xl items-center justify-center shadow-md ${saving
+            className={`w-full px-6 py-4 rounded-xl items-center justify-center  ${saving
               ? 'bg-gray-300 dark:bg-gray-600'
-              : 'bg-gradient-to-r from-green-600 to-green-700 dark:from-green-500 dark:to-green-600'
+              : 'bg-emerald-600 dark:bg-emerald-500'
               }`}
           >
             <View className="flex-row items-center">
               {saving && (
                 <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
               )}
-              <ThemedText className="text-white font-semibold text-base">
+              <ThemedText className="font-semibold text-base" style={{ color: '#ffffff' }}>
                 {saving ? 'Saving…' : 'Save Settings'}
               </ThemedText>
             </View>
@@ -247,9 +247,9 @@ export default function SettingsScreen() {
 
           <Pressable
             onPress={signOut}
-            className="w-full px-6 py-4 rounded-xl items-center justify-center shadow-md bg-gradient-to-r from-red-500 to-red-600"
+            className="w-full px-6 py-4 rounded-xl items-center justify-center bg-gray-800 dark:bg-gray-700"
           >
-            <ThemedText className="text-white font-semibold text-base">
+            <ThemedText className="font-semibold text-base" style={{ color: '#ffffff' }}>
               Sign Out
             </ThemedText>
           </Pressable>

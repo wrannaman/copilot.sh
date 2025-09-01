@@ -94,7 +94,7 @@ export default function SearchScreen() {
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
       headerImage={
-        <View className="flex-1 bg-gradient-to-br from-emerald-50 via-blue-50 to-indigo-50 dark:from-gray-900 dark:via-slate-900 dark:to-indigo-900" />
+        <View className="flex-1 bg-emerald-50 dark:bg-gray-900" />
       }
     >
       <ThemedView className="gap-6">
@@ -105,7 +105,7 @@ export default function SearchScreen() {
           </ThemedText>
         </View>
 
-        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50">
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4  border border-gray-100 dark:border-gray-700/50">
           <View className="flex-row items-center gap-3">
             <View className="flex-1 relative">
               <TextInput
@@ -123,15 +123,15 @@ export default function SearchScreen() {
             <Pressable
               onPress={onSearch}
               disabled={!query.trim() || !organizationId || loading}
-              className={`px-6 py-3 rounded-xl items-center justify-center shadow-md ${!query.trim() || !organizationId || loading
+              className={`px-6 py-3 rounded-xl items-center justify-center  ${!query.trim() || !organizationId || loading
                 ? 'bg-gray-300 dark:bg-gray-600'
-                : 'bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600'
+                : 'bg-emerald-600 dark:bg-emerald-500'
                 }`}
             >
               {loading ? (
                 <ActivityIndicator color="#ffffff" size="small" />
               ) : (
-                <ThemedText className="text-white font-semibold">Search</ThemedText>
+                <ThemedText className="font-semibold" style={{ color: '#ffffff' }}>Search</ThemedText>
               )}
             </Pressable>
           </View>
@@ -148,8 +148,8 @@ export default function SearchScreen() {
         ) : null}
 
         {loading ? (
-          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center shadow-sm border border-gray-100 dark:border-gray-700/50">
-            <ActivityIndicator size="large" color="#3b82f6" />
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center  border border-gray-100 dark:border-gray-700/50">
+            <ActivityIndicator size="large" color="#10b981" />
             <ThemedText className="text-gray-600 dark:text-gray-400 mt-3 font-medium">Searching...</ThemedText>
           </View>
         ) : null}
@@ -160,7 +160,7 @@ export default function SearchScreen() {
               Found {results.length} result{results.length === 1 ? '' : 's'}
             </ThemedText>
             {results.map((item, idx) => (
-              <View key={`${item.session_id}-${idx}`} className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50">
+              <View key={`${item.session_id}-${idx}`} className="bg-white dark:bg-gray-800/50 rounded-2xl p-4  border border-gray-100 dark:border-gray-700/50">
                 <View className="flex-row items-start justify-between mb-3">
                   <View className="flex-1">
                     <ThemedText className="text-base font-semibold text-gray-900 dark:text-white mb-1">
@@ -183,9 +183,9 @@ export default function SearchScreen() {
 
                 <Pressable
                   onPress={() => onCopy(item.content)}
-                  className="bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 px-4 py-2 rounded-lg shadow-sm self-end"
+                  className="bg-emerald-600 dark:bg-emerald-500 px-4 py-2 rounded-lg  self-end"
                 >
-                  <ThemedText className="text-white font-medium text-sm">Copy Text</ThemedText>
+                  <ThemedText className="font-medium text-sm" style={{ color: '#ffffff' }}>Copy Text</ThemedText>
                 </Pressable>
               </View>
             ))}

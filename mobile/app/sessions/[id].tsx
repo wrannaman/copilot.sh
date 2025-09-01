@@ -110,7 +110,7 @@ export default function SessionDetailsScreen() {
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
       headerImage={
-        <View className="flex-1 bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900" />
+        <View className="flex-1 bg-emerald-50 dark:bg-gray-900" />
       }
       includeTopInset={false}
       contentPadding={16}
@@ -128,14 +128,14 @@ export default function SessionDetailsScreen() {
         </View>
 
         {loading ? (
-          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center shadow-sm border border-gray-100 dark:border-gray-700/50">
-            <ActivityIndicator size="large" color="#3b82f6" />
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-8 items-center  border border-gray-100 dark:border-gray-700/50">
+            <ActivityIndicator size="large" color="#10b981" />
             <ThemedText className="text-gray-600 dark:text-gray-400 mt-3 font-medium">Loading session...</ThemedText>
           </View>
         ) : (
           <ScrollView className="gap-4">
-            <View className="bg-white dark:bg-gray-800/50 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden">
-              <View className="bg-gradient-to-r from-blue-500 to-indigo-600 p-4">
+            <View className="bg-white dark:bg-gray-800/50 rounded-2xl  border border-gray-100 dark:border-gray-700/50 overflow-hidden">
+              <View className="bg-emerald-600 p-4">
                 <View className="flex-row items-center justify-between">
                   <View className="flex-row items-center">
                     <View className="w-10 h-10 bg-white/20 rounded-full items-center justify-center mr-3">
@@ -181,8 +181,8 @@ export default function SessionDetailsScreen() {
                         <ThemedText className="text-base font-semibold text-gray-900 dark:text-white mb-3">Topics</ThemedText>
                         <View className="flex-row flex-wrap gap-2">
                           {summary.topics.map((t, idx) => (
-                            <View key={idx} className="bg-blue-100 dark:bg-blue-900/30 px-3 py-1.5 rounded-full border border-blue-200 dark:border-blue-800">
-                              <ThemedText className="text-sm font-medium text-blue-700 dark:text-blue-300">{t}</ThemedText>
+                            <View key={idx} className="bg-emerald-100 dark:bg-emerald-900/30 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                              <ThemedText className="text-sm font-medium text-emerald-700 dark:text-emerald-300">{t}</ThemedText>
                             </View>
                           ))}
                         </View>
@@ -201,8 +201,8 @@ export default function SessionDetailsScreen() {
               </View>
             </View>
 
-            <View className="bg-white dark:bg-gray-800/50 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden">
-              <View className="bg-gradient-to-r from-gray-500 to-gray-600 p-4">
+            <View className="bg-white dark:bg-gray-800/50 rounded-2xl  border border-gray-100 dark:border-gray-700/50 overflow-hidden">
+              <View className="bg-gray-600 p-4">
                 <View className="flex-row items-center justify-between">
                   <View className="flex-row items-center">
                     <View className="w-10 h-10 bg-white/20 rounded-full items-center justify-center mr-3">

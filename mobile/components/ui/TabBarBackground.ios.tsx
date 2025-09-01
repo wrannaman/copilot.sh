@@ -15,11 +15,13 @@ export default function BlurTabBarBackground() {
 }
 
 export function useBottomTabOverflow() {
-  try {
-    return useBottomTabBarHeight();
-  } catch (_) {
-    // When used outside of a Bottom Tab Navigator (e.g., login screen),
-    // fall back to zero so layouts still render.
-    return 0;
-  }
+  // TEMPORARILY DISABLED useBottomTabBarHeight to fix navigation context issue
+  // try {
+  //   return useBottomTabBarHeight();
+  // } catch (_) {
+  //   // When used outside of a Bottom Tab Navigator (e.g., login screen),
+  //   // fall back to zero so layouts still render.
+  //   return 0;
+  // }
+  return 0;
 }

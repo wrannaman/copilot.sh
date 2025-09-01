@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, View, ActivityIndicator, TextInput, Animated, Easing } from 'react-native';
+import { Alert, Pressable, View, ActivityIndicator, TextInput, Animated, Easing, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
-import { ThemedView } from '@/components/ThemedView';
+// import { ThemedView } from '@/components/ThemedView'; // DISABLED FOR TESTING
 import { ThemedText } from '@/components/ThemedText';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
+// import ParallaxScrollView from '@/components/ParallaxScrollView'; // DISABLED FOR TESTING
 import { getSupabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -23,8 +24,8 @@ export default function RecordScreen() {
   // Simple gate to avoid crashing in Expo Go where expo-audio native module isn't available
   if (!hasAudio) {
     return (
-      <ParallaxScrollView headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }} headerImage={<ThemedView />}>
-        <ThemedView className="gap-3">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+        <View className="gap-3">
           <ThemedText type="title">Recorder</ThemedText>
           <ThemedText className="text-gray-500 dark:text-gray-400">
             Audio module unavailable. Build a dev client to enable recording.
@@ -32,21 +33,29 @@ export default function RecordScreen() {
           <ThemedText>
             Run: npx expo run:ios (or EAS build) and open the built app instead of Expo Go.
           </ThemedText>
-        </ThemedView>
-      </ParallaxScrollView>
+        </View>
+      </ScrollView>
     );
   }
   return <RecordScreenInner />
 }
 
 function RecordScreenInner() {
-  // Minimal session-based recorder with live caption snippets from server
+  // Minimal session-based recorder with live caption snippets from server  
+  // TEMPORARILY DISABLED useSafeAreaInsets to fix navigation context issue
+  // const insets = useSafeAreaInsets();
+  const insets = { top: 44, bottom: 20, left: 0, right: 0 }; // Fixed safe area values
   const [recentTranscripts, setRecentTranscripts] = useState<{ seq: number; text: string; timestamp: string }[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [hasStoppedRecording, setHasStoppedRecording] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+
+  // Computed state - effectively recording if recording but not stopped
+  const effectivelyRecording = isRecording && !hasStoppedRecording;
   const [isAuthed, setIsAuthed] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const seqRef = useRef<number>(0);
@@ -269,7 +278,9 @@ function RecordScreenInner() {
       }
       Alert.alert('Error', e?.message || 'Failed to save');
     } finally {
-      setIsSending(false);
+      setTimeout(() => {
+        setIsSending(false);
+      }, 250)
     }
   }, [apiBaseUrl, stopRecordingImmediately]);
 
@@ -296,7 +307,9 @@ function RecordScreenInner() {
             await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
           }
         }
-        setIsSending(false);
+        setTimeout(() => {
+          setIsSending(false);
+        }, 250)
       }
     } finally {
       isUploadingRef.current = false;
@@ -477,6 +490,7 @@ function RecordScreenInner() {
       };
 
       setIsRecording(true);
+      setHasStoppedRecording(false); // Reset stopped state when starting new recording
       setIsStarting(false); // Clear starting state once recording begins
       // Wait a moment for the state to propagate to refs
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -488,136 +502,110 @@ function RecordScreenInner() {
       if (uiTickerRef.current) try { clearInterval(uiTickerRef.current as any); } catch { }
       // countdown ticker removed
       // ticker removed
-      uiTickerRef.current = setInterval(() => { }, 1000) as any;
+      uiTickerRef.current = setInterval(() => { }, 250) as any;
     } catch (e: any) {
       console.log('[rec] start error', e?.message);
       setIsStarting(false); // Clear starting state on error
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
-  }, [recorderState, isRecording, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload]);
+  }, [recorderState, isRecording, isStarting, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload, recordingOptions]);
 
-  const stopAndFlush = useCallback(async () => {
-    console.log('[rec] stopAndFlush - cleaning up timers and capturing final chunk');
-    if (cloudChunkTimeoutRef.current) {
-      try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
-      cloudChunkTimeoutRef.current = null;
-    }
-    if (uiTickerRef.current) {
-      try { clearInterval(uiTickerRef.current as any); } catch { }
-      uiTickerRef.current = null;
-    }
-    nextSendAtRef.current = 0;
+  // Handle stopping process in useEffect to avoid navigation context issues
+  useEffect(() => {
+    if (!isStopping) return;
 
-    // Capture the final chunk BEFORE setting recording to false
-    let finalUri: string | null = null;
-    try {
-      if (stopInProgressRef.current) {
-        // best-effort: wait briefly for in-flight stop
-        console.log('[rec] waiting for in-flight stop to complete');
-        await new Promise(r => setTimeout(r, 200));
+    const performStopAndFlush = async () => {
+      console.log('[rec] stopAndFlush - cleaning up timers and capturing final chunk');
+      if (cloudChunkTimeoutRef.current) {
+        try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
+        cloudChunkTimeoutRef.current = null;
       }
+      if (uiTickerRef.current) {
+        try { clearInterval(uiTickerRef.current as any); } catch { }
+        uiTickerRef.current = null;
+      }
+      nextSendAtRef.current = 0;
 
-      // Always try to stop the recorder to capture any partial recording
-      console.log('[rec] manual stop() - attempting to capture final chunk (isNativeRecorderActive:', isNativeRecorderActiveRef.current, ')');
+      let finalUri: string | null = null;
       try {
-        finalUri = await audioRecorderRef.current?.stop();
-        console.log('[rec] final uri from stop():', finalUri);
-
-        // If stop() returned undefined, try to get the URI from the recorder object
-        if (!finalUri) {
-          console.log('[rec] stop() returned undefined, trying fallback methods...');
-          const fallbackUri = (audioRecorderRef.current as any)?.uri;
-          const recorderStateUri = (recorderState as any)?.url;
-          console.log('[rec] fallback uri from recorder:', fallbackUri);
-          console.log('[rec] fallback uri from recorderState:', recorderStateUri);
-          finalUri = fallbackUri || recorderStateUri;
-
-          if (finalUri) {
-            console.log('[rec] using fallback uri:', finalUri);
-          } else {
-            // Last resort: check if we have a recent recording file
-            console.log('[rec] no URIs found, checking for recent recording files...');
-            try {
-              const dir = await ensureChunkDirAsync();
-              const files = await FileSystem.readDirectoryAsync(dir);
-              const recentRecordings = files
-                .filter(f => f.startsWith('recording-') && f.endsWith('.m4a'))
-                .map(f => ({ name: f, path: `${dir}${f}` }))
-                .sort((a, b) => b.name.localeCompare(a.name)) // Sort by name (timestamp) descending
-                .slice(0, 1); // Get the most recent
-
-              if (recentRecordings.length > 0) {
-                finalUri = recentRecordings[0].path;
-                console.log('[rec] found recent recording file:', finalUri);
+        if (stopInProgressRef.current) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+        console.log('[rec] manual stop() - attempting to capture final chunk (isNativeRecorderActive:', isNativeRecorderActiveRef.current, ')');
+        try {
+          finalUri = await audioRecorderRef.current?.stop();
+          console.log('[rec] final uri from stop():', finalUri);
+          if (!finalUri) {
+            const fallbackUri = (audioRecorderRef.current as any)?.uri || (recorderState as any)?.url;
+            finalUri = fallbackUri;
+            if (finalUri) console.log('[rec] using fallback uri:', finalUri);
+            else {
+              try {
+                const dir = await ensureChunkDirAsync();
+                const files = await FileSystem.readDirectoryAsync(dir);
+                const recentRecordings = files
+                  .filter(f => f.startsWith('recording-') && f.endsWith('.m4a'))
+                  .map(f => ({ name: f, path: `${dir}${f}` }))
+                  .sort((a, b) => b.name.localeCompare(a.name))
+                  .slice(0, 1);
+                if (recentRecordings.length > 0) {
+                  finalUri = recentRecordings[0].path;
+                  console.log('[rec] found recent recording file:', finalUri);
+                }
+              } catch (e: any) {
+                console.log('[rec] failed to find recent recording files:', e?.message);
               }
-            } catch (e: any) {
-              console.log('[rec] failed to find recent recording files:', e?.message);
             }
           }
+          isNativeRecorderActiveRef.current = false;
+        } catch (e: any) {
+          console.log('[rec] stop() failed:', e?.message);
         }
-
-        isNativeRecorderActiveRef.current = false;
       } catch (e: any) {
-        console.log('[rec] stop() failed:', e?.message);
+        console.log('[rec] error stopping final chunk:', e?.message);
       }
-    } catch (e: any) {
-      console.log('[rec] error stopping final chunk:', e?.message);
-    }
 
-    // Now set recording to false
-    setIsRecording(false);
+      if (finalUri) {
+        console.log('[rec] processing final chunk:', finalUri);
+        try {
+          const info = await FileSystem.getInfoAsync(finalUri);
+          const fileSize = (info as any).size || 0;
+          if (info.exists && fileSize > 50) {
+            await enqueueUpload(finalUri as string);
+          } else {
+            await enqueueUpload(finalUri as string);
+          }
+        } catch (e: any) {
+          console.log('[rec] error processing final chunk:', e?.message);
+          await enqueueUpload(finalUri as string);
+        }
+      } else {
+        console.log('[rec] no final chunk to process!');
+      }
 
-    // Process the final chunk if we got one
-    if (finalUri) {
-      console.log('[rec] processing final chunk:', finalUri);
       try {
-        // Check if it's a valid file with content
-        const info = await FileSystem.getInfoAsync(finalUri);
-        console.log('[rec] final chunk file info:', info);
-        const fileSize = (info as any).size || 0;
-        if (info.exists && fileSize > 50) { // Lowered threshold to catch smaller chunks
-          console.log('[rec] final chunk has', fileSize, 'bytes - uploading');
-          console.log('[rec] calling enqueueUpload for final chunk...');
-          await enqueueUpload(finalUri as string);
-          console.log('[rec] enqueueUpload completed for final chunk');
-        } else {
-          console.log('[rec] final chunk too small (', fileSize, 'bytes) - but trying anyway');
-          await enqueueUpload(finalUri as string);
+        const sid = sessionIdRef.current;
+        if (sid) {
+          const supabase = getSupabase();
+          const { data: sessionData } = await supabase.auth.getSession();
+          const accessToken = sessionData?.session?.access_token || '';
+          const res = await fetch(`${apiBaseUrl}/api/sessions/${sid}/stop`, {
+            method: 'POST',
+            headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          });
+          if (!res.ok) console.log('[session] stop failed', await res.json().catch(() => ({})));
+          lastSessionIdRef.current = sid;
         }
-      } catch (e: any) {
-        console.log('[rec] error processing final chunk:', e?.message);
-        // Try to upload anyway
-        console.log('[rec] trying to upload final chunk despite error...');
-        await enqueueUpload(finalUri as string);
-      }
-    } else {
-      console.log('[rec] no final chunk to process - this is the problem!');
-    }
-    // Call stop on the session
-    try {
-      const sid = sessionIdRef.current;
-      if (sid) {
-        const supabase = getSupabase();
-        const { data: sessionData } = await supabase.auth.getSession();
-        const accessToken = sessionData?.session?.access_token || '';
-        const res = await fetch(`${apiBaseUrl}/api/sessions/${sid}/stop`, {
-          method: 'POST',
-          headers: {
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          console.log('[session] stop failed', data);
-        }
-        // Retain last session id for finalize/summarize
-        lastSessionIdRef.current = sid;
+      } catch { }
 
-        // Do not auto finalize; user will trigger Finalize & Summarize
-      }
-    } catch { }
-    // Do not reset session refs here; allow queue to finish uploading final chunk(s)
-  }, [audioRecorder, recorderState, enqueueUpload, apiBaseUrl]);
+      // Finally, transition the UI back to the idle state
+      // EXPERIMENTAL: Don't change isRecording to avoid re-render, use separate state
+      setHasStoppedRecording(true);
+      setIsStopping(false);
+    };
+
+    performStopAndFlush();
+  }, [isStopping, audioRecorder, recorderState, enqueueUpload, apiBaseUrl, ensureChunkDirAsync]);
 
   // Reset button removed for simpler UX
 
@@ -633,13 +621,15 @@ function RecordScreenInner() {
   // Preview removed; we show only live snippets in recent list
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
-      headerImage={
-        <View className="flex-1 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-slate-900 dark:to-blue-900" />
-      }
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{
+        paddingTop: insets.top + 16,
+        paddingBottom: insets.bottom + 16,
+        paddingHorizontal: 16
+      }}
     >
-      <ThemedView className="gap-6">
+      <View className="gap-4">
         <View className="items-center">
           <ThemedText type="title" className="text-gray-900 dark:text-white">Recorder</ThemedText>
           <ThemedText className="text-gray-500 dark:text-gray-400 text-center mt-1">
@@ -647,13 +637,13 @@ function RecordScreenInner() {
           </ThemedText>
         </View>
 
-        <View className="mt-8 items-center justify-center">
+        <View className="mt-4 items-center justify-center">
           <View className="h-32 w-32 items-center justify-center relative">
             {/* Outer ring for visual enhancement */}
-            <View className={`absolute h-32 w-32 rounded-full border-2 ${isRecording ? 'border-red-200 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`} />
+            <View className={`absolute h-32 w-32 rounded-full border-2 ${effectivelyRecording ? 'border-red-200 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`} />
 
-            {/* Pulse animation */}
-            {isRecording ? (
+            {/* Pulse animation - DISABLED FOR TESTING */}
+            {/* {effectivelyRecording ? (
               <Animated.View
                 pointerEvents="none"
                 style={{
@@ -666,23 +656,23 @@ function RecordScreenInner() {
                   transform: [{ scale: pulseScale as any }],
                 }}
               />
-            ) : null}
+            ) : null} */}
 
             {/* Main button with shadow and gradient */}
             <Pressable
-              onPress={isRecording ? stopAndFlush : startRecording}
-              disabled={isStarting}
-              className={`h-24 w-24 rounded-full items-center justify-center shadow-lg ${isRecording
-                ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30'
+              onPress={effectivelyRecording ? () => setIsStopping(true) : startRecording}
+              disabled={isStarting || isStopping}
+              className={`h-24 w-24 rounded-full items-center justify-center border-4 ${effectivelyRecording || isStopping
+                ? 'bg-red-500 border-red-300'
                 : isStarting
-                  ? 'bg-gradient-to-br from-blue-500 to-blue-600 shadow-blue-500/30'
-                  : 'bg-gradient-to-br from-white to-gray-100 dark:from-gray-700 dark:to-gray-800 shadow-gray-900/30 border-2 border-gray-200 dark:border-gray-600'
+                  ? 'bg-emerald-500 border-emerald-300'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-500'
                 }`}
-              accessibilityLabel={isRecording ? 'Stop recording' : isStarting ? 'Starting...' : 'Start recording'}
+              accessibilityLabel={effectivelyRecording || isStopping ? 'Stop recording' : isStarting ? 'Starting...' : 'Start recording'}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               style={{ zIndex: 1 }}
             >
-              {isRecording ? (
+              {effectivelyRecording || isStopping ? (
                 <Ionicons name="stop" size={32} color="#ffffff" />
               ) : isStarting ? (
                 <ActivityIndicator size="large" color="#ffffff" />
@@ -693,32 +683,34 @@ function RecordScreenInner() {
           </View>
 
           {/* Status indicator with better styling */}
-          <View className="mt-12 items-center">
-            {isRecording ? (
+          <View className="mt-6 items-center">
+            {effectivelyRecording ? (
               <View className="flex-row items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-full">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
                 <ThemedText className="text-green-700 dark:text-green-400 font-medium">Recording</ThemedText>
               </View>
+            ) : isStopping ? (
+              <View className="flex-row items-center bg-yellow-50 dark:bg-yellow-900/20 px-4 py-2 rounded-full">
+                <ActivityIndicator size="small" color="#d97706" />
+                <ThemedText className="text-yellow-700 dark:text-yellow-400 font-medium ml-2">Stopping…</ThemedText>
+              </View>
             ) : isStarting ? (
-              <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
-                <ActivityIndicator size="small" color="#3b82f6" />
-                <ThemedText className="text-blue-700 dark:text-blue-400 font-medium ml-2">Starting…</ThemedText>
+              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
+                <ActivityIndicator size="small" color="#10b981" />
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">Starting…</ThemedText>
               </View>
             ) : isSending ? (
-              <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
-                <ActivityIndicator size="small" color="#3b82f6" />
-                <ThemedText className="text-blue-700 dark:text-blue-400 font-medium ml-2">Saving…</ThemedText>
+              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
+                <ActivityIndicator size="small" color="#10b981" />
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">Saving…</ThemedText>
               </View>
             ) : justSaved ? (
-              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-6 py-3 rounded-full border-2 border-emerald-200 dark:border-emerald-800 shadow-lg">
+              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-6 py-3 rounded-full border-2 border-emerald-200 dark:border-emerald-800 ">
                 <ThemedText className="text-2xl mr-2">✅</ThemedText>
                 <ThemedText className="text-emerald-700 dark:text-emerald-400 font-bold text-lg">Saved!</ThemedText>
               </View>
             ) : (
-              <View className="flex-row items-center bg-gray-50 dark:bg-gray-800/50 px-4 py-2 rounded-full">
-                <View className="w-2 h-2 bg-gray-400 rounded-full mr-2" />
-                <ThemedText className="text-gray-600 dark:text-gray-400 font-medium">Ready to record</ThemedText>
-              </View>
+              null
             )}
           </View>
         </View>
@@ -728,8 +720,8 @@ function RecordScreenInner() {
         {/* No preview buffer; live snippets appear below */}
 
         {/* Session Configuration */}
-        {!isRecording ? (
-          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-700/50">
+        {!effectivelyRecording ? (
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 border-2 border-gray-100 dark:border-gray-700/50">
             <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Session Setup</ThemedText>
 
             <View className="gap-4">
@@ -755,7 +747,7 @@ function RecordScreenInner() {
                       <Pressable
                         key={ev.id}
                         onPress={() => setTitle(ev.title || '')}
-                        className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-3 py-1.5 rounded-lg"
+                        className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 px-3 py-1.5 rounded-lg"
                       >
                         <ThemedText className="text-xs text-blue-700 dark:text-blue-300 font-medium">
                           {(ev.title || 'Untitled')} · {new Date(ev.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -858,10 +850,10 @@ function RecordScreenInner() {
                   Alert.alert('Error', e?.message || 'Finalize failed');
                 }
               }}
-              disabled={isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
-              className={`mt-4 w-full px-6 py-4 rounded-xl items-center justify-center shadow-md ${isRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current
-                ? 'bg-gray-300 dark:bg-gray-600'
-                : 'bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600'
+              disabled={effectivelyRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
+              className={`mt-4 w-full px-6 py-4 rounded-xl items-center justify-center border-2 ${effectivelyRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current
+                ? 'bg-gray-300 dark:bg-gray-600 border-gray-200 dark:border-gray-500'
+                : 'bg-emerald-600 dark:bg-emerald-500 border-emerald-400 dark:border-emerald-300'
                 }`}
               accessibilityLabel={'Finalize & Summarize'}
             >
@@ -869,7 +861,7 @@ function RecordScreenInner() {
                 {(isFinalizing || isSummarizing) && (
                   <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
                 )}
-                <ThemedText className="text-white font-semibold text-base">
+                <ThemedText className="font-semibold text-base text-white">
                   {isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}
                 </ThemedText>
               </View>
@@ -878,7 +870,7 @@ function RecordScreenInner() {
         ) : null}
 
         {summaryText ? (
-          <View className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800 rounded-2xl p-4 shadow-sm">
+          <View className="bg-green-50 dark:bg-green-900/10 border-2 border-green-200 dark:border-green-800 rounded-2xl p-4">
             <ThemedText className="text-lg font-semibold text-green-800 dark:text-green-300 mb-2">Summary</ThemedText>
             <ThemedText className="text-green-700 dark:text-green-400 leading-relaxed">{summaryText}</ThemedText>
             {actionItems && actionItems.length > 0 ? (
@@ -896,7 +888,7 @@ function RecordScreenInner() {
         ) : null}
 
         {recentTranscripts.length > 0 ? (
-          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50">
+          <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-4 border-2 border-gray-100 dark:border-gray-700/50">
             <ThemedText className="text-lg font-semibold mb-3 text-gray-900 dark:text-white">Live Transcription</ThemedText>
             <View className="gap-3">
               {recentTranscripts.map((t) => (
@@ -908,8 +900,8 @@ function RecordScreenInner() {
             </View>
           </View>
         ) : null}
-      </ThemedView>
-    </ParallaxScrollView>
+      </View>
+    </ScrollView>
   );
 }
 

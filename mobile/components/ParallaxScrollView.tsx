@@ -1,7 +1,7 @@
 import type { PropsWithChildren, ReactElement } from 'react';
-import { StyleSheet, ScrollView, type RefreshControlProps } from 'react-native';
+import { StyleSheet, ScrollView, View, type RefreshControlProps } from 'react-native';
 
-import { ThemedView } from '@/components/ThemedView';
+// import { ThemedView } from '@/components/ThemedView'; // DISABLED FOR TESTING
 import { useBottomTabOverflow } from '@/components/ui/TabBarBackground';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -25,22 +25,22 @@ export default function ParallaxScrollView({
   const insets = useSafeAreaInsets();
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={styles.container}>
       <ScrollView
         scrollEventThrottle={16}
         scrollIndicatorInsets={{ top: insets.top, bottom }}
         contentContainerStyle={{ paddingTop: includeTopInset ? insets.top : 0, paddingBottom: bottom }}
         refreshControl={refreshControl}>
         {headerImage ? (
-          <ThemedView style={styles.header}>
+          <View style={styles.header}>
             {headerImage}
-          </ThemedView>
+          </View>
         ) : null}
-        <ThemedView style={[styles.content, contentPadding !== undefined ? { padding: contentPadding } : null]}>
+        <View style={[styles.content, contentPadding !== undefined ? { padding: contentPadding } : null]}>
           {children}
-        </ThemedView>
+        </View>
       </ScrollView>
-    </ThemedView>
+    </View>
   );
 }
 

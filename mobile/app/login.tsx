@@ -177,18 +177,18 @@ export default function LoginScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+    <ScrollView className="flex-1 bg-slate-50 dark:bg-gray-900">
       <View className="flex-1 justify-center px-8 py-12 min-h-screen">
         {/* Logo Section */}
         <View className="items-center mb-16">
-          <View className="bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/30 mb-8">
+          <View className="bg-white dark:bg-gray-800 rounded-3xl p-6  mb-8">
             <Image
               source={require('@/assets/images/icon.png')}
               className="w-20 h-20"
               style={{ height: 80, width: 80 }}
             />
           </View>
-          <Text className="text-5xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-300 text-center mb-3">
+          <Text className="text-5xl font-bold text-gray-900 dark:text-white text-center mb-3">
             copilot.sh
           </Text>
           <Text className="text-lg text-gray-600 dark:text-gray-400 text-center font-medium">
@@ -207,14 +207,14 @@ export default function LoginScreen() {
         </View>
 
         {/* Form */}
-        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-6 shadow-lg shadow-gray-200/50 dark:shadow-gray-900/30 backdrop-blur-sm">
+        <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-6  backdrop-blur-sm">
           <View className="gap-6">
             <View className="gap-3">
               <Text className="text-gray-700 dark:text-gray-300 font-semibold text-base">
                 Email (magic link)
               </Text>
               <TextInput
-                className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base shadow-sm"
+                className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base "
                 style={{ borderRadius: 16 }}
                 placeholder="you@company.com"
                 placeholderTextColor="#999999"
@@ -231,7 +231,7 @@ export default function LoginScreen() {
                   Password
                 </Text>
                 <TextInput
-                  className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base shadow-sm"
+                  className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base "
                   style={{ borderRadius: 16 }}
                   placeholder="Enter password"
                   placeholderTextColor="#999999"
@@ -243,7 +243,7 @@ export default function LoginScreen() {
                 <Pressable
                   onPress={signInWithPassword}
                   disabled={loading || !password}
-                  className="w-full p-4 shadow-lg"
+                  className="w-full p-4 "
                   style={{
                     borderRadius: 16,
                     backgroundColor: loading || !password ? '#9CA3AF' : '#2563EB'
@@ -258,7 +258,7 @@ export default function LoginScreen() {
               <Pressable
                 onPress={signInWithMagicLink}
                 disabled={loading || !email.trim()}
-                className="w-full p-4 shadow-lg"
+                className="w-full p-4 "
                 style={{
                   borderRadius: 16,
                   backgroundColor: loading || !email.trim() ? '#9CA3AF' : '#2563EB'
@@ -284,7 +284,7 @@ export default function LoginScreen() {
               <Pressable
                 onPress={() => signInWithProvider('google')}
                 disabled={loading}
-                className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 p-4 w-full shadow-md"
+                className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 p-4 w-full "
                 style={{ borderRadius: 16 }}
               >
                 <View className="flex-row items-center justify-center">
@@ -307,7 +307,7 @@ export default function LoginScreen() {
                 <Pressable
                   onPress={() => signInWithProvider('apple')}
                   disabled={loading}
-                  className="bg-black dark:bg-gray-900 p-4 w-full shadow-md"
+                  className="bg-black dark:bg-gray-900 p-4 w-full "
                   style={{ borderRadius: 16 }}
                 >
                   <View className="flex-row items-center justify-center">
