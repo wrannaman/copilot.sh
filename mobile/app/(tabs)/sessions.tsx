@@ -139,38 +139,40 @@ export default function SessionsScreen() {
               onPress={() => router.push({ pathname: '/sessions/[id]', params: { id: s.id } })}
               className="bg-white dark:bg-gray-800/50 rounded-xl p-3 shadow-sm border border-gray-100 dark:border-gray-700/50 active:scale-98 transition-transform"
             >
-              <View className="flex-1">
-                {/* Row 1: Name | Status */}
-                <View className="flex-row items-center justify-between mb-2">
-                  <ThemedText className="text-base font-semibold text-gray-900 dark:text-white flex-1">
-                    {s.title || 'Untitled Session'}
-                  </ThemedText>
-                  <View className={`px-2 py-0.5 rounded-full ${s.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30' :
-                    s.status === 'processing' ? 'bg-yellow-100 dark:bg-yellow-900/30' :
-                      'bg-gray-100 dark:bg-gray-700'
-                    }`}>
-                    <ThemedText className={`text-xs font-medium capitalize ${s.status === 'ready' ? 'text-green-700 dark:text-green-400' :
-                      s.status === 'processing' ? 'text-yellow-700 dark:text-yellow-400' :
-                        'text-gray-600 dark:text-gray-400'
+              <View className="flex-row items-center">
+                <View className="flex-1">
+                  {/* Row 1: Name | Status */}
+                  <View className="flex-row items-center justify-between mb-2">
+                    <ThemedText className="text-base font-semibold text-gray-900 dark:text-white flex-1 pr-3">
+                      {s.title || 'Untitled Session'}
+                    </ThemedText>
+                    <View className={`px-2 py-0.5 rounded-full ${s.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30' :
+                      s.status === 'processing' ? 'bg-yellow-100 dark:bg-yellow-900/30' :
+                        'bg-gray-100 dark:bg-gray-700'
                       }`}>
-                      {s.status || 'unknown'}
+                      <ThemedText className={`text-xs font-medium capitalize ${s.status === 'ready' ? 'text-green-700 dark:text-green-400' :
+                        s.status === 'processing' ? 'text-yellow-700 dark:text-yellow-400' :
+                          'text-gray-600 dark:text-gray-400'
+                        }`}>
+                        {s.status || 'unknown'}
+                      </ThemedText>
+                    </View>
+                  </View>
+                  
+                  {/* Row 2: Date | Start - End */}
+                  <View className="flex-row items-center justify-between">
+                    <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
+                      {formatDate(s.started_at || s.created_at)}
+                    </ThemedText>
+                    <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
+                      {s.started_at && s.ended_at ? 
+                        `${formatTime(s.started_at)} - ${formatTime(s.ended_at)}` :
+                        s.started_at ? 
+                          `Started ${formatTime(s.started_at)}` :
+                          ''
+                      }
                     </ThemedText>
                   </View>
-                </View>
-                
-                {/* Row 2: Date | Start - End */}
-                <View className="flex-row items-center justify-between">
-                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
-                    {formatDate(s.started_at || s.created_at)}
-                  </ThemedText>
-                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
-                    {s.started_at && s.ended_at ? 
-                      `${formatTime(s.started_at)} - ${formatTime(s.ended_at)}` :
-                      s.started_at ? 
-                        `Started ${formatTime(s.started_at)}` :
-                        ''
-                    }
-                  </ThemedText>
                 </View>
                 <View className="w-6 h-6 bg-gray-100 dark:bg-gray-700 rounded-full items-center justify-center ml-3">
                   <Text className="text-sm text-gray-600 dark:text-gray-400">›</Text>
