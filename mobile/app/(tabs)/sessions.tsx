@@ -158,16 +158,16 @@ export default function SessionsScreen() {
                       </ThemedText>
                     </View>
                   </View>
-                  
+
                   {/* Row 2: Date | Start - End */}
                   <View className="flex-row items-center justify-between">
                     <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
                       {formatDate(s.started_at || s.created_at)}
                     </ThemedText>
                     <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
-                      {s.started_at && s.ended_at ? 
+                      {s.started_at && s.ended_at ?
                         `${formatTime(s.started_at)} - ${formatTime(s.ended_at)}` :
-                        s.started_at ? 
+                        s.started_at ?
                           `Started ${formatTime(s.started_at)}` :
                           ''
                       }
