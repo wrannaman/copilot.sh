@@ -43,6 +43,7 @@ function RecordScreenInner() {
   // Minimal session-based recorder with live caption snippets from server
   const [recentTranscripts, setRecentTranscripts] = useState<{ seq: number; text: string; timestamp: string }[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
@@ -325,7 +326,8 @@ function RecordScreenInner() {
   // No text sending in MVP
 
   const startRecording = useCallback(async () => {
-    if (isRecording) return;
+    if (isRecording || isStarting) return;
+    setIsStarting(true); // Show immediate feedback
     try {
       const status = await AudioModule.requestRecordingPermissionsAsync();
       if (!status.granted) {
@@ -475,6 +477,7 @@ function RecordScreenInner() {
       };
 
       setIsRecording(true);
+      setIsStarting(false); // Clear starting state once recording begins
       // Wait a moment for the state to propagate to refs
       await new Promise(resolve => setTimeout(resolve, 10));
       // kick off
@@ -488,6 +491,7 @@ function RecordScreenInner() {
       uiTickerRef.current = setInterval(() => { }, 1000) as any;
     } catch (e: any) {
       console.log('[rec] start error', e?.message);
+      setIsStarting(false); // Clear starting state on error
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
   }, [recorderState, isRecording, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload]);
@@ -667,16 +671,21 @@ function RecordScreenInner() {
             {/* Main button with shadow and gradient */}
             <Pressable
               onPress={isRecording ? stopAndFlush : startRecording}
+              disabled={isStarting}
               className={`h-24 w-24 rounded-full items-center justify-center shadow-lg ${isRecording
                 ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30'
-                : 'bg-gradient-to-br from-white to-gray-100 dark:from-gray-700 dark:to-gray-800 shadow-gray-900/30 border-2 border-gray-200 dark:border-gray-600'
+                : isStarting
+                  ? 'bg-gradient-to-br from-blue-500 to-blue-600 shadow-blue-500/30'
+                  : 'bg-gradient-to-br from-white to-gray-100 dark:from-gray-700 dark:to-gray-800 shadow-gray-900/30 border-2 border-gray-200 dark:border-gray-600'
                 }`}
-              accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+              accessibilityLabel={isRecording ? 'Stop recording' : isStarting ? 'Starting...' : 'Start recording'}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               style={{ zIndex: 1 }}
             >
               {isRecording ? (
                 <Ionicons name="stop" size={32} color="#ffffff" />
+              ) : isStarting ? (
+                <ActivityIndicator size="large" color="#ffffff" />
               ) : (
                 <Ionicons name="mic" size={32} color="#374151" />
               )}
@@ -689,6 +698,11 @@ function RecordScreenInner() {
               <View className="flex-row items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-full">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
                 <ThemedText className="text-green-700 dark:text-green-400 font-medium">Recording</ThemedText>
+              </View>
+            ) : isStarting ? (
+              <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
+                <ActivityIndicator size="small" color="#3b82f6" />
+                <ThemedText className="text-blue-700 dark:text-blue-400 font-medium ml-2">Starting…</ThemedText>
               </View>
             ) : isSending ? (
               <View className="flex-row items-center bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
