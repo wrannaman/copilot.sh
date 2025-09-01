@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { AuthenticatedNav } from '@/components/layout/authenticated-nav';
 import { SearchComponent } from '@/components/search/search';
-// Removed inline GoogleCalendarCard from dashboard; use dedicated Integrations page
 import QuickActions from '@/components/dashboard/QuickActions'
 
 import TextIngestCard from '@/components/dashboard/TextIngestCard'
@@ -30,8 +29,6 @@ import { createClient as createSbClient } from '@/utils/supabase/client'
 
 function DashboardContent() {
   const { user, currentOrganization } = useAuth();
-
-
   // Upload modal state
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadTitle, setUploadTitle] = useState("");

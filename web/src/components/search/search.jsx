@@ -21,6 +21,7 @@ import {
   User,
   X
 } from "lucide-react";
+import QuickActions from "@/components/dashboard/QuickActions";
 
 export function SearchComponent() {
   const { user, currentOrganization } = useAuth();
@@ -331,6 +332,18 @@ export function SearchComponent() {
             </Button>
           </CardContent>
         </Card>
+      )}
+
+      {/* Quick Actions when no results after searching */}
+      {!loading && hasSearched && results.length === 0 && (
+        <div className="mt-4">
+          <QuickActions />
+        </div>
+      )}
+
+      {/* Quick Actions initially before any search */}
+      {!loading && !hasSearched && results.length === 0 && (
+        <QuickActions />
       )}
 
       {!loading && results.length > 0 && (

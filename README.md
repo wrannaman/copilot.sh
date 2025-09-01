@@ -1,245 +1,128 @@
 # copilot.sh
 
-> Humane Pin raised $200M. This is the open-source version you actually own.  
-> 🪩 Always-on AI memory + agents for work + life.
+Your open-source AI memory for every conversation.
+
+🪩 Record, summarize, and search your most important calls and meetings.
+
+<br/>
+
+<img src="https://user-images.githubusercontent.com/your_image_path/app_promo_graphic.png" alt="Screenshot or GIF of the app in action" width="800"/>
 
 ---
 
 ## What is copilot.sh?
 
-**copilot.sh** is an **open-source ambient AI recorder and agent platform.**  
-It captures everything → organizes with calendar context → lets you build agents that act on your data.
+Copilot.sh is an open-source AI tool that records your important conversations and turns them into a private, searchable memory. It's designed for busy founders, sales professionals, and anyone who wants to stop taking notes and start focusing on the discussion.
 
-- 🟢 **Runs anywhere**: browser, laptop, Raspberry Pi ($40 puck)  
-- 🔒 **Private**: data stays with you, not us  
-- 🛠 **Hackable**: bring your own LLM, extend with MCP plugins  
-- ⚡ **Agentic**: create workflows that summarize, remind, email, or push to Notion/Docs  
+Unlike other tools, it doesn't intrusively join your calls as a bot. You are always in control.
 
 ---
 
-## ✨ Features
+## Key Features
 
-- 🎙️ **Record in browser** (or run 24/7 on a Raspberry Pi puck)  
-- 📅 **Calendar context** → sessions auto-tagged to Google events  
-- 🧩 **Agents** → e.g. “Every evening, digest my day and email me a summary”  
-- 🗂️ **Integrations** → Notion, Google Docs, Gmail (more coming)  
-- 🔍 **Semantic Search** → “what did I promise in the last QBR?”  
-- 🔌 **MCP server** → query your memory from inside ChatGPT  
-
----
-
-## License
-
-Source-available under **BUSL 1.1**:  
-- ✅ Free for personal + self-hosted use.  
-- ❌ No hosting/resale as SaaS without license.  
-- 🔓 Converts to Apache 2.0 after 4 years.  
-
-See [LICENSE.md](./LICENSE.md).
+- 📱 **Mobile & Web Apps**: Capture conversations anywhere with our iOS, Android, and Web apps.
+- 🔒 **Private by Design**: Your data is yours. Use our secure cloud or self-host for complete control.
+- ✨ **Instant AI Summaries**: Turn hours of talk into actionable notes, key insights, and to-do items.
+- 🔍 **Powerful Search**: Instantly find what was said, by whom, and when across all your conversations.
+- 📅 **Calendar Context**: Automatically tags recordings to your Google Calendar events.
+- 🔌 **Seamless Integrations**: Push notes to HubSpot, Notion, Slack, Google Docs, and more.
 
 ---
 
-## Why?
+## 🚀 Get Started Instantly (The Easy Way)
 
-Most “AI memory” tools are **closed, expensive, or creepy**:  
-- Otter/Granola → meeting bots only  
-- Rewind → Mac-only, closed  
-- Humane Pin → $699 + subscription  
+### 1) Cloud Version (Recommended)
+The easiest way to get started. Sign up in 30 seconds and start recording.
 
-**copilot.sh** is:  
-- 🔓 Open source  
-- 💸 Free to run  
-- 🖥️ Hackable (Pi, browser, or infra)  
-- 🔒 Private — you own the data  
+➡️ Try Copilot.sh Cloud for free
+
+### 2) Mobile Apps
+Capture conversations on the go.
+
+➡️ Download on the App Store • ➡️ Get it on Google Play
 
 ---
 
-## 🚀 Quick Start
+## 🔧 Self-Hosting & Development Setup
+
+For those who want to run copilot.sh on their own infrastructure.
 
 ### Prerequisites
 
-- **Node.js 18+** 
-- **Google Cloud Platform account** (for Speech-to-Text API)
-- **Supabase account** (free tier works)
+- Node.js 18+
+- Supabase account (free tier is sufficient)
+- Google Cloud Platform account (for Speech-to-Text API)
+- Docker (for easiest deployment)
 
-### 1. Clone & Install
+### 1) Supabase Schema (run one SQL file)
+In your Supabase project, open the SQL Editor and run the contents of `web/sql/001-initial.sql`. This creates the database tables, RLS policies, and storage bucket.
 
-```bash
-git clone https://github.com/yourusername/copilot.sh
-cd copilot.sh
-```
+Then configure Auth:
+- Set Site URL to `http://localhost:3000`
+- Add Redirect URL `http://localhost:3000/auth/callback`
 
-### 2. Set Up Supabase
+### 2) Configure Environment
+Clone the repository. Create a `.env` file in `web` (and `worker` if you're running it) and fill in your Supabase and Google Cloud credentials.
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **Settings** → **API** and copy your URL + service role key
-3. Go to **Storage** → **Buckets** and create a bucket named `copilot.sh`
-4. Run the database migration:
+Required values:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Anon/public key)
+- `SUPABASE_SERVICE_ROLE` (server-only)
+- Optional: `GOOGLE_APPLICATION_CREDENTIALS` (file path or JSON string) if using server-side transcription
 
-```bash
-cd web
-cp .env.example .env
-# Edit .env with your Supabase credentials
-npm install
-npm run db:migrate  # or paste web/sql/001-initial.sql into SQL Editor
-```
+Mobile app credentials:
+- Open the mobile app → `Settings` → enter your Supabase URL and Anon key (these map to `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON` under the hood).
 
-### 3. Set Up Google Cloud
-
-You need Google Speech-to-Text API for transcription:
+### 3) Run with Docker
+The simplest way to run the entire stack (web app + worker).
 
 ```bash
-# 1. Create a GCP project at console.cloud.google.com
-# 2. Enable Speech-to-Text API
-# 3. Create a service account with Speech Client role
-# 4. Download the JSON key file
-
-# 5. Create a GCS bucket for temporary audio storage
-gcloud config set project YOUR_PROJECT_ID
-gsutil mb gs://copilot-audio-temp
-
-# 6. Grant your service account permissions (replace with your service account email)
-gsutil iam ch serviceAccount:YOUR_SERVICE_ACCOUNT@PROJECT.iam.gserviceaccount.com:objectAdmin gs://copilot-audio-temp
-
-# 7. Set lifecycle rule to auto-delete files after 1 day
-echo '{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 1}}]}' > lifecycle.json
-gsutil lifecycle set lifecycle.json gs://copilot-audio-temp
-rm lifecycle.json
+# Edit docker-compose.yml with your .env variables
+docker-compose up --build
 ```
 
-### 4. Configure Environment
+Your app will be available at http://localhost:3000.
 
-Edit your `.env` files:
-
-**web/.env:**
-```bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_ROLE=your_service_role_key
-GOOGLE_APPLICATION_CREDENTIALS='{"type":"service_account","project_id":"..."}'  # JSON key as string
-GCS_BUCKET_NAME=copilot-audio-temp
-```
-
-**worker/.env:**
-```bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url  
-SUPABASE_SERVICE_ROLE=your_service_role_key
-GOOGLE_APPLICATION_CREDENTIALS='{"type":"service_account","project_id":"..."}'  # Same JSON key
-GCS_BUCKET_NAME=copilot-audio-temp
-SUMMARY_MODEL_ID=gemini-2.0-flash-exp  # Optional: change AI model
-```
-
-### 5. Run the Stack
-
-```bash
-# Terminal 1: Web app
-cd web
-npm install
-npm run dev  # http://localhost:3000
-
-# Terminal 2: Worker (transcription + AI)
-cd worker  
-npm install
-npm run dev  # Polls for new recordings
-
-# Terminal 3: Raspberry Pi (optional)
-cd rpi
-python copilot.py  # Always-on recording
-```
-
-### 6. Test It
-
-1. Go to `http://localhost:3000`
-2. Sign up for an account
-3. Go to **Record** → hit the red button → talk for 30+ seconds → stop
-4. Check the worker logs - you should see GCS upload + transcription
-5. Go to **Search** to find your transcript
+For a more detailed manual setup guide, see `SELF_HOSTING.md` (coming soon).
 
 ---
 
-## 🏗️ Architecture
+## 🤔 Why Copilot.sh?
 
-- **Web**: Next.js app (recording UI, search, dashboard)
-- **Worker**: Node.js background processor (transcription + AI)  
-- **Database**: Supabase (sessions, transcripts, users)
-- **Storage**: Supabase (audio chunks) + GCS (temp files for long audio)
-- **AI**: Google Speech-to-Text + Gemini for summaries
+Most AI meeting tools are intrusive, closed-source, or both. We built a better way.
 
----
-
-## 🔧 Advanced Setup
-
-### Calendar Integration
-
-Connect Google Calendar to auto-tag recordings:
-
-1. Go to **Integrations** → **Google Calendar**
-2. Follow OAuth flow to connect your calendar
-3. Recordings will auto-fill titles from nearby calendar events
-
-### Raspberry Pi Always-On
-
-Deploy to a Pi for 24/7 ambient recording:
-
-```bash
-# On your Pi
-git clone https://github.com/yourusername/copilot.sh
-cd copilot.sh/rpi
-pip install -r requirements.txt
-
-# Edit config
-nano copilot.py  # Set your API endpoints
-
-# Run
-python copilot.py
-```
-
-### Docker Deployment
-
-```bash
-# Build and run with docker-compose
-docker-compose up -d
-```
-
-### Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL | ✅ |
-| `SUPABASE_SERVICE_ROLE` | Supabase service role key | ✅ |
-| `GOOGLE_APPLICATION_CREDENTIALS` | GCP service account JSON | ✅ |
-| `GCS_BUCKET_NAME` | GCS bucket for temp audio | ✅ |
-| `SUMMARY_MODEL_ID` | Gemini model for summaries | ❌ |
-| `WORKER_POLL_INTERVAL_MS` | How often worker checks for jobs | ❌ |
+| Feature | Copilot.sh | Meeting Bots (Otter, Fathom, etc.) |
+|---|---|---|
+| Intrusiveness | ✅ None. You control recording. | ❌ Bot joins your call. |
+| Data Ownership | ✅ Yours forever. Open-source. | ❌ Vendor lock-in. |
+| Privacy | ✅ Private by design. Self-host option. | ❌ Cloud-only. |
+| Flexibility | ✅ Runs anywhere. Mobile, web, desktop. | ❌ Browser-based meetings only. |
 
 ---
 
-## 🐛 Troubleshooting
+## 🗺️ Roadmap
 
-### "The specified bucket does not exist"
-- Create the GCS bucket: `gsutil mb gs://copilot-audio-temp`
-- Make sure your service account has Storage Admin role
+We're just getting started. Here's what's on the horizon:
 
-### "Inline audio exceeds duration limit"  
-- This is normal for long recordings - the system auto-uploads to GCS
-- Check your GCS bucket permissions and credentials
-
-### Worker not processing recordings
-- Check that both web and worker have the same Supabase credentials
-- Verify the worker is running: `cd worker && npm run dev`
-- Check worker logs for authentication errors
-
-### No transcription results
-- Verify Speech-to-Text API is enabled in GCP
-- Check service account has Speech Client role
-- Try a shorter test recording first
+- Desktop Apps: Native clients for macOS, Windows, and Linux.
+- Advanced Agents: Build more complex, trigger-based workflows.
+- Team Features: Shared spaces and collaboration tools.
+- Raspberry Pi Puck: An optional, open-source hardware device for ambient, always-on recording.
 
 ---
 
-## 📚 More Documentation
+## 🤝 Contributing
 
-- **API Reference**: See `web/src/app/api/` for endpoint docs
-- **Database Schema**: See `web/sql/001-initial.sql`  
-- **Deployment Guide**: See `docs/deployment.md` (coming soon)
-- **Agent Development**: See `docs/agents.md` (coming soon)
+We love contributions! Please open issues and pull requests to help improve the project. A formal contributing guide will be added soon.
 
 ---
+
+## 📄 License
+
+Source-available under **BUSL 1.1**.
+
+- ✅ Free for personal and self-hosted use.
+- ❌ No hosting/resale as a competing SaaS without a license.
+- 🔓 Converts to Apache 2.0 after 4 years.
+
+See `LICENSE.md` for the full text.
