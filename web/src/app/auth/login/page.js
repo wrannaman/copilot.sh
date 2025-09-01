@@ -10,13 +10,20 @@ import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mail, Loader2, Chrome } from "lucide-react";
+import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isMagicLinkLoading, setIsMagicLinkLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isPasswordLoading, setIsPasswordLoading] = useState(false);
   const { loginWithMagicLink, loginWithGoogle, isAuthenticated } = useAuth();
   const router = useRouter();
+  const specialEmail = "apple@copilot.sh";
+  const isReviewEmail = email.trim().toLowerCase() === specialEmail;
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const nextParam = searchParams?.get('next') || undefined;
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -34,9 +41,35 @@ export default function LoginPage() {
     setIsMagicLinkLoading(true);
 
     try {
-      await loginWithMagicLink(email);
+      await loginWithMagicLink(email, nextParam);
     } finally {
       setIsMagicLinkLoading(false);
+    }
+  };
+
+  const handlePasswordLogin = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setIsPasswordLoading(true);
+    try {
+      const supabase = createSupabaseClient();
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) throw error;
+      if (data?.session) {
+        try {
+          const pending = typeof window !== 'undefined' ? localStorage.getItem('pending_invite_token') : null;
+          if (!nextParam && pending) {
+            router.push(`/accept-invite?token=${encodeURIComponent(pending)}`);
+            return;
+          }
+        } catch { }
+        router.push(nextParam || '/dashboard');
+      }
+    } catch (err) {
+      // No toast here to keep it simple; rely on default error surface if needed
+      console.error('Password login failed', err?.message || err);
+    } finally {
+      setIsPasswordLoading(false);
     }
   };
 
@@ -44,7 +77,7 @@ export default function LoginPage() {
     setIsGoogleLoading(true);
 
     try {
-      await loginWithGoogle();
+      await loginWithGoogle(nextParam);
     } finally {
       setIsGoogleLoading(false);
     }
@@ -114,8 +147,8 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* Magic Link */}
-              <form onSubmit={handleMagicLink} className="space-y-4">
+              {/* Magic Link or Password (for review email) */}
+              <form onSubmit={isReviewEmail ? handlePasswordLogin : handleMagicLink} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">Email Address</Label>
                   <Input
@@ -125,25 +158,51 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    disabled={isMagicLinkLoading}
+                    disabled={isMagicLinkLoading || isPasswordLoading}
                   />
                 </div>
+
+                {isReviewEmail && (
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="Enter password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      disabled={isPasswordLoading}
+                    />
+                  </div>
+                )}
 
                 <Button
                   type="submit"
                   className="w-full"
-                  disabled={isMagicLinkLoading || !email.trim()}
+                  disabled={(isReviewEmail ? (isPasswordLoading || !password) : isMagicLinkLoading) || !email.trim()}
                 >
-                  {isMagicLinkLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Sending Magic Link...
-                    </>
+                  {isReviewEmail ? (
+                    isPasswordLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Signing in...
+                      </>
+                    ) : (
+                      <>Sign In</>
+                    )
                   ) : (
-                    <>
-                      <Mail className="mr-2 h-4 w-4" />
-                      Send Magic Link
-                    </>
+                    isMagicLinkLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Sending Magic Link...
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="mr-2 h-4 w-4" />
+                        Send Magic Link
+                      </>
+                    )
                   )}
                 </Button>
               </form>

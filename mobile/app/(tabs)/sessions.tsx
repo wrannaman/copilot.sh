@@ -11,14 +11,18 @@ type SessionRow = {
   title?: string | null;
   status?: string | null;
   created_at?: string | null;
-  duration_seconds?: number | null;
+  started_at?: string | null;
+  ended_at?: string | null;
 };
 
-function formatDuration(totalSeconds?: number | null) {
-  if (!totalSeconds && totalSeconds !== 0) return '';
-  const minutes = Math.floor((totalSeconds as number) / 60);
-  const seconds = Math.floor((totalSeconds as number) % 60);
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+function formatTime(dateString?: string | null) {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDate(dateString?: string | null) {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleDateString();
 }
 
 export default function SessionsScreen() {
@@ -54,7 +58,7 @@ export default function SessionsScreen() {
       const supabase = getSupabase();
       const { data, error } = await supabase
         .from('sessions')
-        .select('id,title,status,created_at,duration_seconds')
+        .select('id,title,status,created_at,started_at,ended_at')
         .eq('organization_id', organizationId)
         .order('created_at', { ascending: false })
         .range(startIndex, endIndex);
@@ -135,41 +139,38 @@ export default function SessionsScreen() {
               onPress={() => router.push({ pathname: '/sessions/[id]', params: { id: s.id } })}
               className="bg-white dark:bg-gray-800/50 rounded-xl p-3 shadow-sm border border-gray-100 dark:border-gray-700/50 active:scale-98 transition-transform"
             >
-              <View className="flex-row items-center justify-between">
-                <View className="flex-1">
-                  <ThemedText className="text-base font-semibold text-gray-900 dark:text-white mb-1">
+              <View className="flex-1">
+                {/* Row 1: Name | Status */}
+                <View className="flex-row items-center justify-between mb-2">
+                  <ThemedText className="text-base font-semibold text-gray-900 dark:text-white flex-1">
                     {s.title || 'Untitled Session'}
                   </ThemedText>
-                  <View className="flex-row items-center justify-between">
-                    <View className="flex-row items-center gap-2">
-                      <View className={`px-2 py-0.5 rounded-full ${s.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30' :
-                        s.status === 'processing' ? 'bg-yellow-100 dark:bg-yellow-900/30' :
-                          'bg-gray-100 dark:bg-gray-700'
-                        }`}>
-                        <ThemedText className={`text-xs font-medium capitalize ${s.status === 'ready' ? 'text-green-700 dark:text-green-400' :
-                          s.status === 'processing' ? 'text-yellow-700 dark:text-yellow-400' :
-                            'text-gray-600 dark:text-gray-400'
-                          }`}>
-                          {s.status || 'unknown'}
-                        </ThemedText>
-                      </View>
-                      {s.duration_seconds != null && (
-                        <View className="bg-purple-100 dark:bg-purple-900/30 px-2 py-0.5 rounded-full">
-                          <ThemedText className="text-xs font-medium text-purple-700 dark:text-purple-400">
-                            {formatDuration(s.duration_seconds)}
-                          </ThemedText>
-                        </View>
-                      )}
-                    </View>
-                    <View className="flex-row items-center gap-2">
-                      <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
-                        {s.created_at ? new Date(s.created_at).toLocaleDateString() : ''}
-                      </ThemedText>
-                      <ThemedText className="text-xs text-gray-400 dark:text-gray-500">
-                        {s.created_at ? new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                      </ThemedText>
-                    </View>
+                  <View className={`px-2 py-0.5 rounded-full ${s.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30' :
+                    s.status === 'processing' ? 'bg-yellow-100 dark:bg-yellow-900/30' :
+                      'bg-gray-100 dark:bg-gray-700'
+                    }`}>
+                    <ThemedText className={`text-xs font-medium capitalize ${s.status === 'ready' ? 'text-green-700 dark:text-green-400' :
+                      s.status === 'processing' ? 'text-yellow-700 dark:text-yellow-400' :
+                        'text-gray-600 dark:text-gray-400'
+                      }`}>
+                      {s.status || 'unknown'}
+                    </ThemedText>
                   </View>
+                </View>
+                
+                {/* Row 2: Date | Start - End */}
+                <View className="flex-row items-center justify-between">
+                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
+                    {formatDate(s.started_at || s.created_at)}
+                  </ThemedText>
+                  <ThemedText className="text-xs text-gray-500 dark:text-gray-400">
+                    {s.started_at && s.ended_at ? 
+                      `${formatTime(s.started_at)} - ${formatTime(s.ended_at)}` :
+                      s.started_at ? 
+                        `Started ${formatTime(s.started_at)}` :
+                        ''
+                    }
+                  </ThemedText>
                 </View>
                 <View className="w-6 h-6 bg-gray-100 dark:bg-gray-700 rounded-full items-center justify-center ml-3">
                   <Text className="text-sm text-gray-600 dark:text-gray-400">›</Text>

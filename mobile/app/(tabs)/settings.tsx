@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, TextInput, View, ActivityIndicator, Pressable } from 'react-native';
+import { Alert, TextInput, View, ActivityIndicator, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { Button } from '@/components/ui/button';
+
 import Constants from 'expo-constants';
 import { getSupabase, setSupabaseConfig } from '@/lib/supabase';
 import { Redirect, router } from 'expo-router';
@@ -32,6 +32,7 @@ export default function SettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -56,8 +57,10 @@ export default function SettingsScreen() {
           const supabase = getSupabase();
           const { data } = await supabase.auth.getSession();
           setIsAuthed(!!data?.session);
+          setUserEmail(data?.session?.user?.email || '');
         } catch {
           setIsAuthed(false);
+          setUserEmail('');
         }
       } finally {
         setAuthChecked(true);
@@ -67,6 +70,7 @@ export default function SettingsScreen() {
     const supabase = getSupabase();
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsAuthed(!!session);
+      setUserEmail(session?.user?.email || '');
     });
     return () => {
       sub.subscription.unsubscribe();
@@ -104,6 +108,7 @@ export default function SettingsScreen() {
           await setSupabaseConfig(nextSbUrl, nextSbAnon);
         }
         setIsAuthed(false);
+        setUserEmail('');
         Alert.alert('Saved', 'Settings updated. Please sign in again.');
         router.replace('/login');
         return;
@@ -114,8 +119,10 @@ export default function SettingsScreen() {
           const supabase = getSupabase();
           const { data } = await supabase.auth.getSession();
           setIsAuthed(!!data?.session);
+          setUserEmail(data?.session?.user?.email || '');
         } catch {
           setIsAuthed(false);
+          setUserEmail('');
         }
         Alert.alert('Saved', 'Settings updated');
       }
@@ -132,6 +139,7 @@ export default function SettingsScreen() {
       await supabase.auth.signOut();
     } catch { }
     setIsAuthed(false);
+    setUserEmail('');
     router.replace('/login');
   }
 
@@ -158,6 +166,19 @@ export default function SettingsScreen() {
             Configure your app settings
           </ThemedText>
         </View>
+
+        {userEmail ? (
+          <View className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 border border-blue-100 dark:border-blue-800/50">
+            <View className="items-center">
+              <ThemedText className="text-blue-700 dark:text-blue-300 font-medium">
+                Logged in as
+              </ThemedText>
+              <ThemedText className="text-blue-900 dark:text-blue-100 font-semibold mt-1">
+                {userEmail}
+              </ThemedText>
+            </View>
+          </View>
+        ) : null}
 
         <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-700/50">
           <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Server Configuration</ThemedText>
@@ -210,8 +231,8 @@ export default function SettingsScreen() {
             onPress={save}
             disabled={saving}
             className={`w-full px-6 py-4 rounded-xl items-center justify-center shadow-md ${saving
-                ? 'bg-gray-300 dark:bg-gray-600'
-                : 'bg-gradient-to-r from-green-600 to-green-700 dark:from-green-500 dark:to-green-600'
+              ? 'bg-gray-300 dark:bg-gray-600'
+              : 'bg-gradient-to-r from-green-600 to-green-700 dark:from-green-500 dark:to-green-600'
               }`}
           >
             <View className="flex-row items-center">
@@ -238,20 +259,6 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    gap: 12,
-  },
-  field: {
-    gap: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#dddddd',
-    borderRadius: 8,
-    padding: 10,
-    color: '#111111',
-  },
-});
+
 
 

@@ -86,17 +86,34 @@ function TeamPageContent() {
                 full_name: 'Unknown User'
               }
             }));
-            setTeam(teamWithProfiles);
+            const normalizedTeam = teamWithProfiles.map(m => {
+              if (m.user_id === userId) {
+                const email = user?.email || m.profile?.email || 'Email not available';
+                const full_name = m.profile?.full_name || user?.user_metadata?.full_name || null;
+                return { ...m, profile: { ...m.profile, email, full_name: full_name || m.profile?.full_name } };
+              }
+              return m;
+            });
+            setTeam(normalizedTeam);
           } else {
             console.warn('Could not get user details:', userError);
-            setTeam(data.map(member => ({
+            const fallbackTeam = data.map(member => ({
               ...member,
               profile: {
                 id: member.user_id,
                 email: 'Email not available',
                 full_name: 'User'
               }
-            })));
+            }));
+            const normalizedTeam = fallbackTeam.map(m => {
+              if (m.user_id === userId) {
+                const email = user?.email || m.profile?.email || 'Email not available';
+                const full_name = m.profile?.full_name || user?.user_metadata?.full_name || null;
+                return { ...m, profile: { ...m.profile, email, full_name: full_name || m.profile?.full_name } };
+              }
+              return m;
+            });
+            setTeam(normalizedTeam);
           }
         } else {
           setTeam([]);
@@ -116,7 +133,7 @@ function TeamPageContent() {
 
         // Load organization details
         const { data: orgData } = await supabase
-          .from('organizations')
+          .from('org')
           .select('name, logo_url')
           .eq('id', orgId)
           .single();
@@ -162,7 +179,7 @@ function TeamPageContent() {
 
     try {
       const { data, error } = await supabase
-        .from('organization_invites')
+        .from('org_invites')
         .select('*')
         .eq('organization_id', orgId)
         .eq('status', 'pending');
@@ -191,7 +208,7 @@ function TeamPageContent() {
     try {
       // Check if there's already a pending invite
       const { data: existingInvite } = await supabase
-        .from('organization_invites')
+        .from('org_invites')
         .select('id')
         .eq('organization_id', currentOrganization.org_id)
         .eq('email', email.toLowerCase())
@@ -204,7 +221,7 @@ function TeamPageContent() {
 
       // Create the invite
       const { data: created, error } = await supabase
-        .from('organization_invites')
+        .from('org_invites')
         .insert({
           organization_id: currentOrganization.org_id,
           email: email.toLowerCase(),
@@ -242,7 +259,7 @@ function TeamPageContent() {
   const cancelInvite = async (inviteId) => {
     try {
       const { error } = await supabase
-        .from('organization_invites')
+        .from('org_invites')
         .update({ status: 'cancelled' })
         .eq('id', inviteId);
 
@@ -368,7 +385,7 @@ function TeamPageContent() {
     setSavingOrgDetails(true);
     try {
       const { error } = await supabase
-        .from('organizations')
+        .from('org')
         .update({
           name: orgName.trim() || null,
           logo_url: orgLogoUrl.trim() || null
@@ -459,7 +476,7 @@ function TeamPageContent() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Team Management</h1>
             <p className="text-muted-foreground mt-2">
-              Manage team members for {currentOrganization.org_name}
+              Manage team members
             </p>
           </div>
 

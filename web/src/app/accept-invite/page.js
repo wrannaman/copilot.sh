@@ -14,7 +14,13 @@ function AcceptInviteContent() {
 
   useEffect(() => {
     const run = async () => {
-      if (!token) {
+      let effectiveToken = token;
+      if (!effectiveToken) {
+        try {
+          effectiveToken = localStorage.getItem('pending_invite_token') || '';
+        } catch { }
+      }
+      if (!effectiveToken) {
         router.push('/');
         return;
       }
@@ -24,24 +30,25 @@ function AcceptInviteContent() {
 
       if (!userData?.user) {
         try {
-          localStorage.setItem('pending_invite_token', token);
+          localStorage.setItem('pending_invite_token', effectiveToken);
         } catch { }
-        router.push('/auth/login');
+        // Redirect to auth callback after login to ensure org and then come back to accept
+        router.push(`/auth/login?next=${encodeURIComponent(`/accept-invite?token=${encodeURIComponent(effectiveToken)}`)}`);
         return;
       }
 
       const res = await fetch(`/api/organizations/invites/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token: effectiveToken }),
       });
       const data = await res.json();
       if (res.ok) {
-        toast({ title: 'Joined organization', description: data.message });
+        toast.success('Joined organization', { description: data.message });
         try { localStorage.removeItem('pending_invite_token'); } catch { }
         router.push('/dashboard');
       } else {
-        toast({ title: 'Error', description: data.message, variant: 'destructive' });
+        toast.error('Error', { description: data.message });
         router.push('/');
       }
     };

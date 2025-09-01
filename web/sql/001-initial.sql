@@ -152,6 +152,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE device_api_keys TO service_role;
 -- ----------------------------------------------------------------------------
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org TO service_role;
+GRANT SELECT, UPDATE ON TABLE org TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE org_members TO service_role;
 GRANT SELECT ON TABLE org_invites TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO authenticated, service_role;
@@ -332,11 +333,19 @@ CREATE POLICY "view my orgs" ON org
   FOR SELECT USING (
     id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
   );
-CREATE POLICY "update my orgs (owner/admin)" ON org
-  FOR UPDATE USING (
+DROP POLICY IF EXISTS "update my orgs (owner/admin)" ON org;
+CREATE POLICY "managers update orgs" ON org
+  FOR UPDATE TO authenticated
+  USING (
     id IN (
       SELECT organization_id FROM org_members 
-      WHERE user_id = auth.uid()
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
+  )
+  WITH CHECK (
+    id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
     )
   );
 CREATE POLICY "create org (any auth)" ON org
@@ -351,15 +360,30 @@ CREATE POLICY "view my memberships" ON org_members
   FOR SELECT USING (user_id = auth.uid());
 -- Management policies can be added via functions or handled by service role; omitted here to prevent recursion
 
--- organization_invites
+-- org_invites
 CREATE POLICY "org members view invites" ON org_invites
   FOR SELECT USING (
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
   );
-CREATE POLICY "owners manage invites" ON org_invites
-  FOR ALL USING (
-    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role = 'owner')
+-- Allow owners/admins/editors to insert/update/delete invites in their org
+DROP POLICY IF EXISTS "owners manage invites" ON org_invites;
+CREATE POLICY "managers manage invites" ON org_invites
+  FOR ALL TO authenticated
+  USING (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
+  )
+  WITH CHECK (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
   );
+
+-- Base table privileges for client (RLS still enforced)
+GRANT SELECT, INSERT, UPDATE ON TABLE org_invites TO authenticated;
 
 -- sessions
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;

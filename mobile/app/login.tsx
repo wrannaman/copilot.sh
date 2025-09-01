@@ -4,8 +4,7 @@ import { Image } from 'expo-image'
 import * as WebBrowser from 'expo-web-browser'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { ThemedText } from '@/components/ThemedText'
-import { ThemedView } from '@/components/ThemedView'
+
 import { getSupabase } from '@/lib/supabase'
 import { Ionicons, AntDesign } from '@expo/vector-icons'
 import * as AppleAuthentication from 'expo-apple-authentication'
@@ -15,9 +14,12 @@ WebBrowser.maybeCompleteAuthSession()
 export default function LoginScreen() {
   const supabase = getSupabase()
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [appleAvailable, setAppleAvailable] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
+  const specialEmail = 'apple@copilot.sh'
+  const isReviewEmail = email.trim().toLowerCase() === specialEmail
 
   useEffect(() => {
     AppleAuthentication.isAvailableAsync()
@@ -116,6 +118,23 @@ export default function LoginScreen() {
     }
   }
 
+  async function signInWithPassword() {
+    if (!email.trim() || !password) return
+    setLoading(true)
+    try {
+      console.log('[password] signing in with email/password for', email.trim())
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+      console.log('[password] result', { hasSession: !!data?.session, error: error?.message })
+      if (error) throw error
+      if (data?.session) return router.replace('/(tabs)/record')
+    } catch (e: any) {
+      console.log('[password] error', e?.message)
+      Alert.alert('Error', e?.message || 'Invalid email or password')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function signInWithProvider(provider: 'google' | 'apple') {
     setLoading(true)
     try {
@@ -206,16 +225,50 @@ export default function LoginScreen() {
               />
             </View>
 
-            <Pressable
-              onPress={signInWithMagicLink}
-              disabled={loading || !email.trim()}
-              className={`w-full p-4 shadow-lg ${loading || !email.trim() ? 'bg-gray-400 dark:bg-gray-600' : 'bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600'}`}
-              style={{ borderRadius: 16 }}
-            >
-              <Text className="text-white text-center font-semibold text-base">
-                {loading ? 'Sending…' : 'Send magic link'}
-              </Text>
-            </Pressable>
+            {isReviewEmail ? (
+              <View className="gap-3">
+                <Text className="text-gray-700 dark:text-gray-300 font-semibold text-base">
+                  Password
+                </Text>
+                <TextInput
+                  className="border border-gray-200 dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base shadow-sm"
+                  style={{ borderRadius: 16 }}
+                  placeholder="Enter password"
+                  placeholderTextColor="#999999"
+                  autoCapitalize="none"
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                />
+                <Pressable
+                  onPress={signInWithPassword}
+                  disabled={loading || !password}
+                  className="w-full p-4 shadow-lg"
+                  style={{
+                    borderRadius: 16,
+                    backgroundColor: loading || !password ? '#9CA3AF' : '#2563EB'
+                  }}
+                >
+                  <Text className="text-white text-center font-semibold text-base">
+                    {loading ? 'Signing in…' : 'Sign in'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                onPress={signInWithMagicLink}
+                disabled={loading || !email.trim()}
+                className="w-full p-4 shadow-lg"
+                style={{
+                  borderRadius: 16,
+                  backgroundColor: loading || !email.trim() ? '#9CA3AF' : '#2563EB'
+                }}
+              >
+                <Text className="text-white text-center font-semibold text-base">
+                  {loading ? 'Sending…' : 'Send magic link'}
+                </Text>
+              </Pressable>
+            )}
 
             <View className="items-center my-6">
               <View className="flex-row items-center w-full">

@@ -27,6 +27,7 @@ export async function POST(request) {
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || ''
     const acceptUrl = `${baseUrl}/accept-invite?token=${invite.token}`
+    console.log("🚀 ~ INVITE! acceptUrl:", acceptUrl)
 
     const resend = new Resend(process.env.RESEND_API_KEY)
 

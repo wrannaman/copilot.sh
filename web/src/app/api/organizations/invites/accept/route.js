@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient as createServiceClient, createClient } from '@/utils/supabase/server'
+import { createServiceClient, createClient } from '@/utils/supabase/server'
 
 export async function POST(request) {
   try {
@@ -22,7 +22,7 @@ export async function POST(request) {
 
     // Look up invite
     const { data: invite, error: inviteError } = await supabase
-      .from('organization_invites')
+      .from('org_invites')
       .select('id, organization_id, email, role, status, expires_at')
       .eq('token', token)
       .single()
@@ -59,7 +59,7 @@ export async function POST(request) {
 
     // Mark invite as accepted
     await supabase
-      .from('organization_invites')
+      .from('org_invites')
       .update({ status: 'accepted' })
       .eq('id', invite.id)
 

@@ -48,13 +48,13 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  signInWithGoogle: async () => {
+  signInWithGoogle: async (nextPath) => {
     const supabase = getSupabaseClient()
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '')
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${appUrl}/auth/callback`,
+        redirectTo: `${appUrl}/auth/callback${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`,
         // Use PKCE flow for better security
         flowType: 'pkce'
       }
@@ -62,14 +62,14 @@ export const useAuthStore = create((set, get) => ({
     return { data, error }
   },
 
-  signInWithMagicLink: async (email) => {
+  signInWithMagicLink: async (email, nextPath) => {
     const supabase = getSupabaseClient()
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '')
     const { data, error } = await supabase.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: `${appUrl}/auth/callback`,
+        emailRedirectTo: `${appUrl}/auth/callback${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`,
         // Use PKCE flow for better security
         flowType: 'pkce'
       }
@@ -142,18 +142,22 @@ export const useAuthStore = create((set, get) => ({
   },
 
   ensureOrganization: async () => {
-    const { currentOrganization } = get()
+    const { currentOrganization, user } = get()
     if (currentOrganization) {
       return currentOrganization;
+    }
+    if (!user) {
+      // Not authenticated; nothing to ensure yet
+      return null
     }
 
     const result = await get().fetchOrganizations()
 
-    if (result.data && result.data.length > 0) {
+    if (result && result.data && result.data.length > 0) {
       return result.data[0]
     }
-    console.error("❌ Failed to ensure organization exists");
-    throw new Error('Failed to ensure organization exists')
+    // No organizations yet; caller can handle null
+    return null
   },
 
   createOrganization: async (_name) => {
@@ -225,8 +229,8 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, []) // Empty dependency array - only run once on mount
 
-  const loginWithGoogle = async () => {
-    const { data, error } = await store.signInWithGoogle()
+  const loginWithGoogle = async (nextPath) => {
+    const { data, error } = await store.signInWithGoogle(nextPath)
 
     if (error) {
       toast.error("Google login failed", {
@@ -239,8 +243,8 @@ export function AuthProvider({ children }) {
     return { success: true, data }
   }
 
-  const loginWithMagicLink = async (email) => {
-    const { data, error } = await store.signInWithMagicLink(email)
+  const loginWithMagicLink = async (email, nextPath) => {
+    const { data, error } = await store.signInWithMagicLink(email, nextPath)
 
     if (error) {
       toast.error("Magic link failed", {
