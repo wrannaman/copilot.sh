@@ -41,7 +41,7 @@ export default function RecordScreen() {
 }
 
 function RecordScreenInner() {
-  // Minimal session-based recorder with live caption snippets from server  
+  // Minimal session-based recorder with live caption snippets from server
   // TEMPORARILY DISABLED useSafeAreaInsets to fix navigation context issue
   // const insets = useSafeAreaInsets();
   const insets = { top: 44, bottom: 20, left: 0, right: 0 }; // Fixed safe area values
@@ -81,6 +81,50 @@ function RecordScreenInner() {
   const [events, setEvents] = useState<any[]>([]);
   const [eventsLoading, setEventsLoading] = useState<boolean>(false);
   const orgIdRef = useRef<string | null>(null);
+  // Recording duration timer
+  const [recordingDuration, setRecordingDuration] = useState<number>(0);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordingStartTimeRef = useRef<number | null>(null);
+
+  // Format duration helper
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Comprehensive state reset for clean new sessions
+  const resetForNewSession = useCallback(() => {
+    console.log('[rec] resetting all state for new session');
+    // Core recording states - ensure clean slate (but don't clear isStarting if we're starting)
+    setIsRecording(false);
+    setHasStoppedRecording(false);
+    // Don't clear isStarting here - it's managed by the button press flow
+    setIsStopping(false);
+
+    // UI States
+    setJustSaved(false);
+    setIsFinalizing(false);
+    setRecordingDuration(0);
+    setRecentTranscripts([]);
+
+    // Clear form fields for fresh session
+    setTitle('');
+    setCustomPrompt('');
+
+    // Refs - don't reset sessionIdRef here as it's needed for auto-finalize
+    seqRef.current = 0;
+    try { seenMd5Ref.current.clear(); } catch { }
+    try { uploadQueueRef.current.length = 0; } catch { }
+    recordingStartTimeRef.current = null;
+
+    // Clear any remaining timers
+    if (durationTimerRef.current) {
+      try { clearInterval(durationTimerRef.current as any); } catch { }
+      durationTimerRef.current = null;
+    }
+  }, []);
+
   // Pulse animation for record button
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const pulseLoopRef = useRef<any>(null);
@@ -209,11 +253,25 @@ function RecordScreenInner() {
         try { clearTimeout(cloudChunkTimeoutRef.current as any); } catch { }
         cloudChunkTimeoutRef.current = null;
       }
+      // Use our new state management approach
+      setHasStoppedRecording(true);
       setIsRecording(false);
       try { await audioRecorder.stop(); } catch { }
       isNativeRecorderActiveRef.current = false;
+
+      // Clear duration timer
+      if (durationTimerRef.current) {
+        try { clearInterval(durationTimerRef.current as any); } catch { }
+        durationTimerRef.current = null;
+      }
+      recordingStartTimeRef.current = null;
+
+      // Reset to clean state after a delay
+      setTimeout(() => {
+        resetForNewSession();
+      }, 1000);
     } catch { }
-  }, [audioRecorder]);
+  }, [audioRecorder, resetForNewSession]);
 
   // No local STT in MVP
 
@@ -266,9 +324,7 @@ function RecordScreenInner() {
       }
       // seq was assigned at enqueue time to ensure monotonic order
       // diagnostics removed from UI
-      // saved successfully - show celebration
-      setJustSaved(true);
-      setTimeout(() => setJustSaved(false), 2000); // Show for 2 seconds
+      // chunk saved successfully - no UI notification needed
     } catch (e: any) {
       const msg = String(e?.message || '').toLowerCase();
       console.log('[session] upload failed', e?.message);
@@ -309,7 +365,7 @@ function RecordScreenInner() {
         }
         setTimeout(() => {
           setIsSending(false);
-        }, 250)
+        }, 100)
       }
     } finally {
       isUploadingRef.current = false;
@@ -339,8 +395,12 @@ function RecordScreenInner() {
   // No text sending in MVP
 
   const startRecording = useCallback(async () => {
-    if (isRecording || isStarting) return;
-    setIsStarting(true); // Show immediate feedback
+    if (isRecording) return;
+    // isStarting is now set by the button press for immediate feedback
+
+    // Reset any leftover state from previous session
+    resetForNewSession();
+
     try {
       const status = await AudioModule.requestRecordingPermissionsAsync();
       if (!status.granted) {
@@ -492,6 +552,16 @@ function RecordScreenInner() {
       setIsRecording(true);
       setHasStoppedRecording(false); // Reset stopped state when starting new recording
       setIsStarting(false); // Clear starting state once recording begins
+
+      // Start duration timer
+      recordingStartTimeRef.current = Date.now();
+      setRecordingDuration(0);
+      durationTimerRef.current = setInterval(() => {
+        if (recordingStartTimeRef.current) {
+          const elapsed = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+          setRecordingDuration(elapsed);
+        }
+      }, 1000) as any;
       // Wait a moment for the state to propagate to refs
       await new Promise(resolve => setTimeout(resolve, 10));
       // kick off
@@ -508,7 +578,7 @@ function RecordScreenInner() {
       setIsStarting(false); // Clear starting state on error
       Alert.alert('Error', e?.message || 'Failed to start recorder');
     }
-  }, [recorderState, isRecording, isStarting, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload, recordingOptions]);
+  }, [recorderState, isRecording, isStarting, apiBaseUrl, ensureChunkDirAsync, title, customPrompt, enqueueUpload, recordingOptions, resetForNewSession]);
 
   // Handle stopping process in useEffect to avoid navigation context issues
   useEffect(() => {
@@ -524,6 +594,12 @@ function RecordScreenInner() {
         try { clearInterval(uiTickerRef.current as any); } catch { }
         uiTickerRef.current = null;
       }
+      // Stop duration timer
+      if (durationTimerRef.current) {
+        try { clearInterval(durationTimerRef.current as any); } catch { }
+        durationTimerRef.current = null;
+      }
+      recordingStartTimeRef.current = null;
       nextSendAtRef.current = 0;
 
       let finalUri: string | null = null;
@@ -598,10 +674,62 @@ function RecordScreenInner() {
         }
       } catch { }
 
+      // Auto-finalize the session
+      const autoFinalize = async () => {
+        const sid = lastSessionIdRef.current;
+        if (!sid) return;
+
+        try {
+          setIsFinalizing(true);
+          const supabase = getSupabase();
+          const { data: sessionData } = await supabase.auth.getSession();
+          const accessToken = sessionData?.session?.access_token || '';
+
+          // Update title/prompt if provided
+          if ((title && title.trim()) || (customPrompt && customPrompt.trim())) {
+            fetch(`${apiBaseUrl}/api/sessions/${sid}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+              body: JSON.stringify({ title: title?.trim() || null, summary_prompt: customPrompt?.trim() || null }),
+            }).catch(() => { });
+          }
+
+          // Start finalization
+          await fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
+            method: 'POST',
+            headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          });
+
+          console.log('[rec] auto-finalization started for session:', sid);
+          // Delay before showing completion to avoid flash
+          setTimeout(() => {
+            setIsFinalizing(false);
+            setJustSaved(true);
+            // Clean up session state for next recording
+            setTimeout(() => {
+              setJustSaved(false);
+              // Reset all recording-related state for fresh start
+              sessionIdRef.current = null; // Clear session ID after finalization
+              resetForNewSession();
+              setIsStarting(false); // Clear starting state at end of complete session
+            }, 2000); // Reduced from 4s to 2s
+          }, 500);
+        } catch (e: any) {
+          console.log('[rec] auto-finalize failed:', e?.message);
+          setIsFinalizing(false);
+        }
+      };
+
       // Finally, transition the UI back to the idle state
-      // EXPERIMENTAL: Don't change isRecording to avoid re-render, use separate state
       setHasStoppedRecording(true);
       setIsStopping(false);
+      // Complete the recording state transition
+      setIsRecording(false);
+
+      // Auto-finalize after a short delay to let uploads settle
+      setTimeout(() => {
+        autoFinalize();
+      }, 1000);
     };
 
     performStopAndFlush();
@@ -640,7 +768,7 @@ function RecordScreenInner() {
         <View className="mt-4 items-center justify-center">
           <View className="h-32 w-32 items-center justify-center relative">
             {/* Outer ring for visual enhancement */}
-            <View className={`absolute h-32 w-32 rounded-full border-2 ${effectivelyRecording ? 'border-red-200 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`} />
+            <View className={`absolute h-32 w-32 rounded-full border-2 ${effectivelyRecording ? 'border-red-200 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`} pointerEvents="none" />
 
             {/* Pulse animation - DISABLED FOR TESTING */}
             {/* {effectivelyRecording ? (
@@ -658,23 +786,47 @@ function RecordScreenInner() {
               />
             ) : null} */}
 
-            {/* Main button with shadow and gradient */}
+            {/* Main button with press feedback */}
             <Pressable
-              onPress={effectivelyRecording ? () => setIsStopping(true) : startRecording}
-              disabled={isStarting || isStopping}
-              className={`h-24 w-24 rounded-full items-center justify-center border-4 ${effectivelyRecording || isStopping
+              onPress={effectivelyRecording ? () => {
+                // Add slight delay to show press feedback before state change
+                setTimeout(() => setIsStopping(true), 50);
+              } : () => {
+                // Show immediate feedback, then start recording
+                setIsStarting(true);
+                startRecording();
+              }}
+              disabled={isStarting || isStopping || isFinalizing}
+              className={`h-24 w-24 rounded-full items-center justify-center border-4 ${effectivelyRecording && !isStopping
                 ? 'bg-red-500 border-red-300'
-                : isStarting
+                : (isStarting || isStopping || isFinalizing)
                   ? 'bg-emerald-500 border-emerald-300'
                   : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-500'
                 }`}
-              accessibilityLabel={effectivelyRecording || isStopping ? 'Stop recording' : isStarting ? 'Starting...' : 'Start recording'}
+              accessibilityLabel={
+                effectivelyRecording && !isStopping ? 'Stop recording'
+                  : isStopping ? 'Stopping...'
+                    : isFinalizing ? 'Processing...'
+                      : isStarting ? 'Starting...'
+                        : 'Start recording'
+              }
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              style={{ zIndex: 1 }}
+              style={({ pressed }) => [
+                {
+                  zIndex: 1,
+                  transform: [{ scale: pressed && !isStarting && !isStopping && !isFinalizing ? 0.95 : 1 }],
+                  opacity: (isStarting || isStopping || isFinalizing) ? 0.7 : (pressed ? 0.8 : 1),
+                },
+              ]}
+              android_ripple={{
+                color: effectivelyRecording ? '#ffffff40' : '#10b98140',
+                radius: 48,
+                borderless: false
+              }}
             >
-              {effectivelyRecording || isStopping ? (
+              {effectivelyRecording && !isStopping ? (
                 <Ionicons name="stop" size={32} color="#ffffff" />
-              ) : isStarting ? (
+              ) : (isStarting || isStopping || isFinalizing) ? (
                 <ActivityIndicator size="large" color="#ffffff" />
               ) : (
                 <Ionicons name="mic" size={32} color="#374151" />
@@ -682,36 +834,27 @@ function RecordScreenInner() {
             </Pressable>
           </View>
 
-          {/* Status indicator with better styling */}
-          <View className="mt-6 items-center">
+          {/* Simplified status indicator - less flashing */}
+          <View className="mt-6 items-center min-h-[44px] justify-center">
             {effectivelyRecording ? (
               <View className="flex-row items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-full">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
-                <ThemedText className="text-green-700 dark:text-green-400 font-medium">Recording</ThemedText>
+                <ThemedText className="text-green-700 dark:text-green-400 font-medium">
+                  Recording {formatDuration(recordingDuration)}
+                </ThemedText>
               </View>
-            ) : isStopping ? (
-              <View className="flex-row items-center bg-yellow-50 dark:bg-yellow-900/20 px-4 py-2 rounded-full">
-                <ActivityIndicator size="small" color="#d97706" />
-                <ThemedText className="text-yellow-700 dark:text-yellow-400 font-medium ml-2">Stopping…</ThemedText>
-              </View>
-            ) : isStarting ? (
+            ) : (isStarting || isStopping) ? (
               <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
                 <ActivityIndicator size="small" color="#10b981" />
-                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">Starting…</ThemedText>
-              </View>
-            ) : isSending ? (
-              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
-                <ActivityIndicator size="small" color="#10b981" />
-                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">Saving…</ThemedText>
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">
+                  {isStarting ? 'Starting…' : 'Stopping…'}
+                </ThemedText>
               </View>
             ) : justSaved ? (
-              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-6 py-3 rounded-full border-2 border-emerald-200 dark:border-emerald-800 ">
-                <ThemedText className="text-2xl mr-2">✅</ThemedText>
-                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-bold text-lg">Saved!</ThemedText>
+              <View className="flex-row items-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium">Ready for next session</ThemedText>
               </View>
-            ) : (
-              null
-            )}
+            ) : null}
           </View>
         </View>
 
@@ -719,10 +862,12 @@ function RecordScreenInner() {
 
         {/* No preview buffer; live snippets appear below */}
 
-        {/* Session Configuration */}
-        {!effectivelyRecording ? (
+        {/* Session Configuration - Only show when recording or processing */}
+        {(effectivelyRecording || isFinalizing || justSaved) && (
           <View className="bg-white dark:bg-gray-800/50 rounded-2xl p-5 border-2 border-gray-100 dark:border-gray-700/50">
-            <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Session Setup</ThemedText>
+            <ThemedText className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+              {effectivelyRecording ? 'Recording Session' : (isFinalizing ? 'Processing Session' : 'Session Complete')}
+            </ThemedText>
 
             <View className="gap-4">
               <View className="gap-2">
@@ -775,99 +920,21 @@ function RecordScreenInner() {
               </View>
             </View>
 
-            <Pressable
-              onPress={async () => {
-                try {
-                  const sid = lastSessionIdRef.current;
-                  if (!sid) {
-                    Alert.alert('No session', 'Nothing to finalize.');
-                    return;
-                  }
-                  if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
-                  setIsFinalizing(true);
-                  // no progress displayed
-                  setSummaryText('');
-                  setActionItems([]);
-                  const supabase = getSupabase();
-                  const { data: sessionData } = await supabase.auth.getSession();
-                  const accessToken = sessionData?.session?.access_token || '';
-                  // Update title/prompt just in case
-                  if ((title && title.trim()) || (customPrompt && customPrompt.trim())) {
-                    fetch(`${apiBaseUrl}/api/sessions/${sid}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                      body: JSON.stringify({ title: title?.trim() || null, summary_prompt: customPrompt?.trim() || null }),
-                    }).catch(() => { });
-                  }
-                  // Kick off finalize once
-                  await fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
-                    method: 'POST',
-                    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                  }).catch(() => { });
-                  // Poll status and nudge finalize
-                  finalizePollRef.current = setInterval(async () => {
-                    try {
-                      const statusRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/status`, {
-                        headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                      });
-                      const statusJson = await statusRes.json().catch(() => ({}));
-                      const ready = String(statusJson?.status || '').toLowerCase() === 'ready';
-                      if (ready) {
-                        if (finalizePollRef.current) { try { clearInterval(finalizePollRef.current as any) } catch { } finalizePollRef.current = null }
-                        setIsFinalizing(false);
-                        // Summarize with prompt
-                        setIsSummarizing(true);
-                        const body: any = customPrompt && customPrompt.trim() ? { prompt: customPrompt.trim() } : {};
-                        const sumRes = await fetch(`${apiBaseUrl}/api/sessions/${sid}/summarize`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                          body: JSON.stringify(body),
-                        });
-                        const sumJson = await sumRes.json().catch(() => ({}));
-                        if (!sumRes.ok) {
-                          Alert.alert('Summarize failed', sumJson?.message || 'Please try again.');
-                        } else {
-                          const summary = String(sumJson?.summary || '').trim();
-                          const items = Array.isArray(sumJson?.action_items) ? sumJson.action_items.filter((s: any) => typeof s === 'string') : [];
-                          setSummaryText(summary);
-                          setActionItems(items);
-                        }
-                        setIsSummarizing(false);
-                      } else {
-                        // Nudge finalize again in background
-                        fetch(`${apiBaseUrl}/api/sessions/${sid}/finalize`, {
-                          method: 'POST',
-                          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-                        }).catch(() => { });
-                      }
-                    } catch (e: any) {
-                      console.log('[finalize] poll error', e?.message);
-                    }
-                  }, 3000) as any;
-                } catch (e: any) {
-                  setIsFinalizing(false);
-                  setIsSummarizing(false);
-                  Alert.alert('Error', e?.message || 'Finalize failed');
-                }
-              }}
-              disabled={effectivelyRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current}
-              className={`mt-4 w-full px-6 py-4 rounded-xl items-center justify-center border-2 ${effectivelyRecording || isFinalizing || isSummarizing || !lastSessionIdRef.current
-                ? 'bg-gray-300 dark:bg-gray-600 border-gray-200 dark:border-gray-500'
-                : 'bg-emerald-600 dark:bg-emerald-500 border-emerald-400 dark:border-emerald-300'
-                }`}
-              accessibilityLabel={'Finalize & Summarize'}
-            >
-              <View className="flex-row items-center">
-                {(isFinalizing || isSummarizing) && (
-                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
-                )}
-                <ThemedText className="font-semibold text-base text-white">
-                  {isFinalizing ? 'Finalizing…' : (isSummarizing ? 'Summarizing…' : 'Finalize & Summarize')}
-                </ThemedText>
+            {/* Processing status */}
+            {isFinalizing && (
+              <View className="mt-4 flex-row items-center justify-center bg-emerald-50 dark:bg-emerald-900/20 px-4 py-3 rounded-xl border-2 border-emerald-200 dark:border-emerald-800">
+                <ActivityIndicator size="small" color="#10b981" />
+                <ThemedText className="text-emerald-700 dark:text-emerald-400 font-medium ml-2">Processing session...</ThemedText>
               </View>
-            </Pressable>
+            )}
+
+            {justSaved && (
+              <View className="mt-4 flex-row items-center justify-center bg-green-50 dark:bg-green-900/20 px-4 py-3 rounded-xl border-2 border-green-200 dark:border-green-800">
+                <ThemedText className="text-green-700 dark:text-green-400 font-medium">✅ Session processed! Check Sessions tab for results.</ThemedText>
+              </View>
+            )}
           </View>
-        ) : null}
+        )}
 
         {summaryText ? (
           <View className="bg-green-50 dark:bg-green-900/10 border-2 border-green-200 dark:border-green-800 rounded-2xl p-4">

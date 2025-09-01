@@ -147,7 +147,7 @@ export default function SessionDetailsScreen() {
                     onPress={() => onCopy(((summary?.summary || '') + ((summary?.action_items?.length || 0) ? `\n\nAction items:\n- ${summary?.action_items?.join('\n- ')}` : '') + ((summary?.topics?.length || 0) ? `\n\nTopics:\n- ${summary?.topics?.join('\n- ')}` : '')).trim())}
                     className="bg-white/20 px-3 py-1.5 rounded-lg"
                   >
-                    <ThemedText className="text-white font-medium text-sm">Copy All</ThemedText>
+                    <ThemedText className="text-white font-medium text-sm">Copy Summary</ThemedText>
                   </Pressable>
                 </View>
               </View>
