@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Alert, Pressable, Text, TextInput, View, ScrollView, ActivityIndicator } from 'react-native'
+import { Alert, Pressable, Text, TextInput, View, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native'
 import { Image } from 'expo-image'
 import * as WebBrowser from 'expo-web-browser'
 import * as Linking from 'expo-linking'
@@ -14,6 +14,7 @@ WebBrowser.maybeCompleteAuthSession()
 
 export default function LoginScreen() {
   const supabase = getSupabase()
+  const { height } = useWindowDimensions()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -22,6 +23,7 @@ export default function LoginScreen() {
   const colorScheme = useColorScheme()
   const specialEmail = 'apple@copilot.sh'
   const isReviewEmail = email.trim().toLowerCase() === specialEmail
+  const isSmallScreen = height < 700
 
   useEffect(() => {
     AppleAuthentication.isAvailableAsync()
@@ -182,12 +184,13 @@ export default function LoginScreen() {
     <ScrollView className="flex-1 bg-slate-50 dark:bg-gray-900">
       <View className="flex-1 justify-center px-8 py-12 min-h-screen">
         {/* Logo Section */}
-        <View className="items-center mb-16">
+        <View className="items-center mb-10" style={{ marginBottom: isSmallScreen ? 16 : 40 }}>
           <View className="bg-white dark:bg-gray-800 rounded-3xl p-6  mb-8">
             <Image
               source={colorScheme === 'dark' ? require('@/assets/images/icon-white.png') : require('@/assets/images/icon.png')}
               className="w-20 h-20"
-              style={{ height: 80, width: 80 }}
+              style={{ height: 75, width: 75 }}
+              contentFit="contain"
             />
           </View>
           <Text className="text-5xl font-bold text-gray-900 dark:text-white text-center mb-3">

@@ -3,6 +3,7 @@ import { Alert, Pressable, View, ActivityIndicator, TextInput, Animated, Easing,
 
 import { Redirect } from 'expo-router';
 import { ThemedText } from '@/components/ThemedText';
+import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { getSupabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -36,7 +37,6 @@ export default function RecordScreen() {
 }
 
 function RecordScreenInner() {
-  const insets = { top: 44, bottom: 20, left: 0, right: 0 }; // Fixed safe area values
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -529,13 +529,9 @@ function RecordScreenInner() {
   if (!isAuthed) return <Redirect href="/login" />;
 
   return (
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={{
-        paddingTop: insets.top + 16,
-        paddingBottom: insets.bottom + 16,
-        paddingHorizontal: 16
-      }}
+    <ParallaxScrollView
+      headerBackgroundColor={{ light: '#f8fafc', dark: '#0f172a' }}
+      headerImage={<View className="flex-1 bg-emerald-50 dark:bg-gray-900" />}
     >
       <View className="gap-4">
         <View className="items-center">
@@ -720,10 +716,7 @@ function RecordScreenInner() {
           </View>
         )}
 
-
-
-
       </View>
-    </ScrollView>
+    </ParallaxScrollView>
   );
 }
