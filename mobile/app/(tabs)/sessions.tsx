@@ -4,7 +4,7 @@ import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { getSupabase } from '@/lib/supabase';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 type SessionRow = {
   id: string;
@@ -98,6 +98,14 @@ export default function SessionsScreen() {
     // Reset to first page when org changes
     setPage(1);
   }, [organizationId]);
+
+  // Refresh when the tab/screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      if (!organizationId) return;
+      onRefresh();
+    }, [organizationId, onRefresh])
+  );
 
   return (
     <ParallaxScrollView
