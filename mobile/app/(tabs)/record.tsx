@@ -232,6 +232,7 @@ function RecordScreenInner() {
 
       console.log('[upload] Session verified:', sessionCheck);
       const { data: sessionData } = await supabase.auth.getSession();
+      console.log("🚀 ~ sessionData:", sessionData)
 
       console.log('[upload] Original file size:', info.size);
       console.log('[upload] Original file URI:', uri);
@@ -269,16 +270,25 @@ function RecordScreenInner() {
       try {
         console.log('[upload] Attempting signed URL upload with Expo FileSystem...');
 
-        // Use Expo FileSystem.uploadAsync for proper file handling
-        const uploadUrl = `${supabase.storage.from('copilot.sh').getPublicUrl('dummy').data.publicUrl.replace('/dummy', '')}/${path}?token=${token}`;
+        // Use Supabase signed upload endpoint (requires Authorization due to RLS)
+        const supabaseUrl = (globalThis as any).__SUPABASE_URL__ || process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+        const anonKey = (globalThis as any).__SUPABASE_ANON__ || process.env.EXPO_PUBLIC_SUPABASE_ANON || '';
+        const accessToken = sessionData?.session?.access_token || '';
 
-        console.log('[upload] Upload URL:', uploadUrl);
+        // Note: use the signed upload endpoint, not the public object URL
+        const signedUploadUrl = `${supabaseUrl}/storage/v1/object/upload/sign/copilot.sh/${path}?token=${token}`;
+
+        console.log('[upload] Upload URL:', signedUploadUrl);
         console.log('[upload] File URI:', uri);
 
-        const uploadResponse = await FileSystem.uploadAsync(uploadUrl, uri, {
+        const uploadResponse = await FileSystem.uploadAsync(signedUploadUrl, uri, {
           httpMethod: 'PUT',
           headers: {
             'Content-Type': 'audio/mp4',
+            // Required by Supabase Gateway when RLS is enabled
+            ...(anonKey ? { apikey: anonKey } : {}),
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            'x-upsert': 'true',
           },
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
         });
@@ -289,26 +299,34 @@ function RecordScreenInner() {
           throw new Error(`Upload failed with status ${uploadResponse.status}: ${uploadResponse.body || 'Unknown error'}`);
         }
 
-        console.log('[upload] Successfully uploaded via Expo FileSystem');
+        console.log('[upload] Successfully uploaded via Supabase signed endpoint');
 
         clearInterval(progressInterval);
         setUploadProgress(100);
 
-        // Create debug download URL
+        // Create debug download URL (optional). Storage listing can be eventually consistent; retry briefly.
         try {
           const supabase = getSupabase();
-          const { data: downloadData, error: urlError } = await supabase.storage
-            .from('copilot.sh')
-            .createSignedUrl(path, 3600);
-
-          if (urlError) {
-            console.log('[upload] Error creating debug URL:', urlError);
-          } else if (downloadData?.signedUrl) {
-            console.log('[upload] ✅ Download URL for testing:', downloadData.signedUrl);
-            console.log('[upload] 🎵 Test with: ffplay "' + downloadData.signedUrl + '"');
+          let attempt = 0;
+          let signedOk = false;
+          while (attempt < 5 && !signedOk) {
+            const { data: downloadData, error: urlError } = await supabase.storage
+              .from('copilot.sh')
+              .createSignedUrl(path, 3600);
+            if (!urlError && downloadData?.signedUrl) {
+              console.log('[upload] ✅ Download URL for testing:', downloadData.signedUrl);
+              console.log('[upload] 🎵 Test with: ffplay "' + downloadData.signedUrl + '"');
+              signedOk = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 300));
+            attempt += 1;
+          }
+          if (!signedOk) {
+            console.log('[upload] Debug URL not immediately available (expected). Skipping.');
           }
         } catch (debugErr) {
-          console.log('[upload] Exception generating debug URL:', debugErr);
+          console.log('[upload] Exception generating debug URL (ignored):', debugErr);
         }
       } catch (err) {
         clearInterval(progressInterval);
