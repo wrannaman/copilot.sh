@@ -2,9 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Pressable, View, ActivityIndicator, TextInput, Animated, Easing, ScrollView } from 'react-native';
 
 import { Redirect } from 'expo-router';
-// import { ThemedView } from '@/components/ThemedView'; // DISABLED FOR TESTING
 import { ThemedText } from '@/components/ThemedText';
-// import ParallaxScrollView from '@/components/ParallaxScrollView'; // DISABLED FOR TESTING
 import { getSupabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -13,16 +11,12 @@ import {
   useAudioRecorder,
   AudioModule,
   setAudioModeAsync,
-
   IOSOutputFormat,
   AudioQuality,
 } from 'expo-audio';
-// Removed local STT; keeping simple manual start/stop with server-side session handling
 
-// Simple text-only "record" MVP to align with stateless 5s chunks approach
 export default function RecordScreen() {
   const hasAudio = !!(AudioModule as any)?.requestRecordingPermissionsAsync;
-  // Simple gate to avoid crashing in Expo Go where expo-audio native module isn't available
   if (!hasAudio) {
     return (
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
@@ -42,9 +36,6 @@ export default function RecordScreen() {
 }
 
 function RecordScreenInner() {
-  // Single continuous recording approach - no chunks
-  // TEMPORARILY DISABLED useSafeAreaInsets to fix navigation context issue
-  // const insets = useSafeAreaInsets();
   const insets = { top: 44, bottom: 20, left: 0, right: 0 }; // Fixed safe area values
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -75,12 +66,9 @@ function RecordScreenInner() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Comprehensive state reset for clean new sessions
   const resetForNewSession = useCallback(() => {
     console.log('[rec] resetting all state for new session');
-    // Core recording states - ensure clean slate (but don't clear isStarting if we're starting)
     setIsRecording(false);
-    // Don't clear isStarting here - it's managed by the button press flow
     setIsStopping(false);
     setIsUploading(false);
 
@@ -133,8 +121,6 @@ function RecordScreenInner() {
       pulseLoopRef.current = null;
     };
   }, [isRecording, pulseAnim]);
-
-
 
   const recordingOptions = useMemo(() => ({
     extension: '.m4a',
@@ -542,8 +528,6 @@ function RecordScreenInner() {
   }
   if (!isAuthed) return <Redirect href="/login" />;
 
-  // Preview removed; we show only live snippets in recent list
-
   return (
     <ScrollView
       style={{ flex: 1 }}
@@ -743,7 +727,3 @@ function RecordScreenInner() {
     </ScrollView>
   );
 }
-
-// styles removed; using Tailwind utility classes
-
-
