@@ -8,6 +8,7 @@ import { router } from 'expo-router'
 import { getSupabase } from '@/lib/supabase'
 import { Ionicons, AntDesign } from '@expo/vector-icons'
 import * as AppleAuthentication from 'expo-apple-authentication'
+import { useColorScheme } from '@/hooks/useColorScheme'
 
 WebBrowser.maybeCompleteAuthSession()
 
@@ -18,6 +19,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false)
   const [appleAvailable, setAppleAvailable] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
+  const colorScheme = useColorScheme()
   const specialEmail = 'apple@copilot.sh'
   const isReviewEmail = email.trim().toLowerCase() === specialEmail
 
@@ -183,7 +185,7 @@ export default function LoginScreen() {
         <View className="items-center mb-16">
           <View className="bg-white dark:bg-gray-800 rounded-3xl p-6  mb-8">
             <Image
-              source={require('@/assets/images/icon.png')}
+              source={colorScheme === 'dark' ? require('@/assets/images/icon-white.png') : require('@/assets/images/icon.png')}
               className="w-20 h-20"
               style={{ height: 80, width: 80 }}
             />
