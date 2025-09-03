@@ -198,4 +198,32 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null, w
 
 export { loadCombinedOrConcat, transcribeWhole }
 
+// WhisperX integration: run Python script with diarization and return JSON
+export async function transcribeWithWhisperX(buffer) {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `copilot-whisperx-`))
+  const audioFile = path.join(tmpDir, `audio.wav`)
+  await fs.writeFile(audioFile, buffer)
+
+  const scriptPath = path.join(process.cwd(), 'whisper', 'whisperx_transcribe.py')
+  const pythonBin = process.env.WHISPERX_PYTHON || 'python3'
+
+  try {
+    const { stdout } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })
+    let parsed
+    try {
+      parsed = JSON.parse(stdout)
+    } catch (e) {
+      throw new Error(`failed to parse whisperx json: ${e?.message}`)
+    }
+
+    const segments = Array.isArray(parsed?.segments) ? parsed.segments : []
+    const text = segments.map(s => s?.text || '').filter(Boolean).join(' ').trim()
+
+    return { text, json: parsed }
+  } catch (error) {
+    console.warn('[whisperx] failed:', error?.message)
+    throw error
+  }
+}
+
 
