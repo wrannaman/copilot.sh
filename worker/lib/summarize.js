@@ -18,7 +18,7 @@ export async function summarizeTranscript(text, instructions = '') {
 
   try {
     const model = new ChatGoogleGenerativeAI({
-      model: process.env.SUMMARY_MODEL_ID || 'gemini-2.5-flash',
+      model: process.env.SUMMARY_MODEL_ID || 'gemini-2.5-pro',
       temperature: 0.2,
       apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY
     })
