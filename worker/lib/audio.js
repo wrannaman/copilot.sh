@@ -199,10 +199,11 @@ async function transcribeWhole(buffer, gcsUri = null, onOperationStart = null, w
 export { loadCombinedOrConcat, transcribeWhole }
 
 // WhisperX integration: run Python script with diarization and return JSON
-export async function transcribeWithWhisperX(buffer) {
+export async function transcribeWithWhisperX(buffer, opts = {}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `copilot-whisperx-`))
   const audioFile = path.join(tmpDir, `audio.wav`)
   await fs.writeFile(audioFile, buffer)
+  const outJson = path.join(tmpDir, `out.json`)
 
   // Resolve script in several likely locations:
   // - ../whisper relative to process cwd
@@ -227,29 +228,27 @@ export async function transcribeWithWhisperX(buffer) {
 
   console.log('[whisperx] pythonBin', pythonBin)
 
-  const cmd = `${pythonBin} ${scriptPath} ${audioFile}`
+  const cmd = `${pythonBin} ${scriptPath} ${audioFile} ${outJson}`
   console.log('[whisperx] launching', { pythonBin, scriptPath, candidates, audioFileBytes: buffer.length })
   console.log('[whisperx] command:', cmd, { cwd: process.cwd(), hasHF: !!(process.env.HUGGING_FACE_HUB_TOKEN || process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN) })
 
   try {
     const execOpts = { maxBuffer: 1024 * 1024 * 200, env: { ...process.env, PYTHONUNBUFFERED: '1' } }
-    const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], execOpts)
+    const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile, outJson], execOpts)
     if (stderr && stderr.trim().length > 0) {
       console.log('[whisperx][stderr]', stderr.slice(0, 2000))
     }
+    // Prefer file-based JSON handoff
     let parsed
-    const outStr = String(stdout || '').trim()
     try {
-      if (!outStr) throw new Error('empty stdout')
-      parsed = JSON.parse(outStr)
+      const buf = await fs.readFile(outJson)
+      parsed = JSON.parse(buf.toString('utf8'))
     } catch (e) {
-      // Attempt to extract JSON object from noisy stdout
+      // Fallback: parse stdout
+      const outStr = String(stdout || '').trim()
       const m = outStr.match(/\{[\s\S]*\}/)
-      if (m) {
-        try { parsed = JSON.parse(m[0]) } catch (e2) { throw new Error(`failed to parse whisperx json (extracted): ${e2?.message}`) }
-      } else {
-        throw new Error(`failed to parse whisperx json: ${e?.message}`)
-      }
+      if (m) parsed = JSON.parse(m[0])
+      else throw new Error(`failed to read or parse whisperx json: ${e?.message}`)
     }
 
     const segments = Array.isArray(parsed?.segments) ? parsed.segments : []

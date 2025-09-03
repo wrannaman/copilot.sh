@@ -10,10 +10,11 @@ import logging
 def main():
     logging.basicConfig(level=logging.INFO, format='[whisperx] %(message)s')
     if len(sys.argv) < 2:
-        print("Usage: whisperx_transcribe.py <audio_path>", file=sys.stderr)
+        print("Usage: whisperx_transcribe.py <audio_path> [out_json_path]", file=sys.stderr)
         sys.exit(1)
 
     audio_path = sys.argv[1]
+    out_json_path = sys.argv[2] if len(sys.argv) >= 3 else None
 
     try:
         import torch  # noqa: F401
@@ -93,7 +94,18 @@ def main():
             if "words" not in seg or seg["words"] is None:
                 seg["words"] = []
 
-        print(json.dumps(out, ensure_ascii=False))
+        if out_json_path:
+            try:
+                os.makedirs(os.path.dirname(out_json_path), exist_ok=True)
+            except Exception:
+                pass
+            with open(out_json_path, 'w', encoding='utf-8') as f:
+                json.dump(out, f, ensure_ascii=False, indent=2)
+            logging.info(f"wrote json: {out_json_path}")
+            # Also print the path for convenience
+            print(json.dumps({"path": out_json_path}))
+        else:
+            print(json.dumps(out, ensure_ascii=False))
     except Exception as e:
         logging.exception("whisperx failure")
         print(json.dumps({
