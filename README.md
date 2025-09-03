@@ -87,6 +87,61 @@ For a more detailed manual setup guide, see `SELF_HOSTING.md` (coming soon).
 
 ---
 
+### 4) WhisperX (Optional) – Diarization
+
+WhisperX adds fast ASR with word-level timestamps and speaker diarization (via pyannote). This runs alongside Google Speech in the worker so you can compare both outputs.
+
+Setup (recommended: fresh Python 3.11 env):
+
+```bash
+# Create a clean env (conda shown; venv works too)
+conda create -n whisperx311 python=3.11 -y
+conda activate whisperx311
+
+# Install ASR + diarization dependencies
+pip install -U whisperx "pyannote-audio>=3.3.2" "pyannote-pipeline>=3.0.1" speechbrain
+
+# Required for diarization
+export HUGGING_FACE_HUB_TOKEN="<your_hf_token>"
+# In browser (once), accept model licenses while logged in:
+# - pyannote/segmentation
+# - pyannote/Speaker-Diarization-3.1
+```
+
+Quick test with a WAV file:
+
+```bash
+python whisper/whisperx_transcribe.py /path/to/audio.wav
+```
+
+Worker integration:
+
+- EITHER export the Python path before starting the worker:
+
+```bash
+export WHISPERX_PYTHON="/path/to/your/env/bin/python"
+node worker/index.js
+```
+
+- OR edit `worker/lib/audio.js` to point `pythonBin` at your env’s python (no env var needed).
+
+Outputs and where to find them:
+
+- Storage bucket `copilot.sh`:
+  - `transcripts/<org_id>/<session_id>.whisperx.json` (structured WhisperX output)
+  - `transcripts/<org_id>/<session_id>.whisperx.txt` (plain text from WhisperX)
+- Database (`sessions`):
+  - `whisperx_json_path`, `whisperx_text_path`
+  - `whisperx_status` (running|done|error), `whisperx_started_at`, `whisperx_error`
+
+Signed URLs for quick copy/paste are logged in the worker when files are uploaded.
+
+Troubleshooting:
+
+- If you see NumPy 2.x vs compiled deps errors (SciPy/Matplotlib), use a clean Python 3.11 env as above.
+- Ensure the Hugging Face token is set if you want diarization; without it, WhisperX will skip speaker labeling.
+
+
 ## 🤔 Why Copilot.sh?
 
 Most AI meeting tools are intrusive, closed-source, or both. We built a better way.
