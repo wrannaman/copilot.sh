@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   audio_mime TEXT,             -- e.g., audio/webm
   transcript_storage_path TEXT, -- path to transcript file in storage
   raw_transcript_path TEXT,    -- path to raw transcript JSON with timestamps/confidence
+  whisperx_json_path TEXT,    -- path to whisperx JSON file with timestamps/confidence
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session

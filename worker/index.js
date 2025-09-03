@@ -1,7 +1,7 @@
 import dotenv from 'dotenv'
 dotenv.config()
 
-import { loadCombinedOrConcat, transcribeWhole } from './lib/audio.js'
+import { loadCombinedOrConcat, transcribeWhole, transcribeWithWhisperX } from './lib/audio.js'
 import { supabaseService, uploadText, updateSession, uploadAudioToGCS, deleteFromGCS } from './lib/services.js'
 import { embedTexts } from './lib/embedding.js'
 import { processAndChunkTranscript } from './lib/chunks.js'
@@ -33,10 +33,34 @@ async function finalizeTranscription({ sessionId, organizationId, text, results 
   const entry = `_TIMESTAMP_${new Date().toISOString()}|${text || ''}\n`
   await uploadText(bucket, transcriptPath, entry)
 
+  // Log signed URL for human-readable transcript
+  try {
+    const supa = supabaseService()
+    const expiresIn = Number(process.env.SIGNED_URL_EXPIRES || 3600)
+    const { data: tSigned } = await supa.storage.from(bucket).createSignedUrl(transcriptPath, expiresIn)
+    if (tSigned?.signedUrl) {
+      console.log(`[finalize] Signed URL (Google transcript .txt, ${expiresIn}s):`, tSigned.signedUrl)
+    }
+  } catch (e) {
+    console.warn('[finalize] failed to create signed URL for transcript', e?.message)
+  }
+
   // Store RAW Google results array exactly as returned
   const rawResultsPath = `transcripts/${organizationId}/${sessionId}.raw.json`
   const rawArray = Array.isArray(results) ? results : (results?.results || [])
   await uploadText(bucket, rawResultsPath, JSON.stringify(rawArray, null, 2), 'application/json')
+
+  // Log signed URL for RAW results JSON
+  try {
+    const supa = supabaseService()
+    const expiresIn = Number(process.env.SIGNED_URL_EXPIRES || 3600)
+    const { data: rSigned } = await supa.storage.from(bucket).createSignedUrl(rawResultsPath, expiresIn)
+    if (rSigned?.signedUrl) {
+      console.log(`[finalize] Signed URL (Google raw JSON, ${expiresIn}s):`, rSigned.signedUrl)
+    }
+  } catch (e) {
+    console.warn('[finalize] failed to create signed URL for raw results', e?.message)
+  }
 
   await updateSession(sessionId, {
     transcript_storage_path: transcriptPath,
@@ -138,6 +162,8 @@ async function processSession({ sessionId, organizationId }) {
 
   console.log(`[processSession] Audio: ${audioSizeKB.toFixed(1)}KB, ${estimatedDurationSeconds.toFixed(1)}s (${estimatedDurationMinutes.toFixed(2)}min), ${isChunked ? `${chunkCount} chunks` : 'single file'}`)
 
+  // (moved) WhisperX kickoff occurs after GCS job starts
+
   // ALWAYS use GCS for all recordings - simpler, more reliable, handles any duration
   console.log(`[processSession] Always using GCS for transcription (${isChunked ? `${chunkCount} chunks` : 'single file'})`)
 
@@ -171,6 +197,45 @@ async function processSession({ sessionId, organizationId }) {
 
     const { operationName } = await transcribeWhole(audioBuf, gcsUri, saveOperationName, false)
     console.log('[processSession] Transcription job started', { sessionId, operationName })
+
+    // Kick off WhisperX in parallel now that the GCS job is started
+    try {
+      console.log('[processSession] Launching WhisperX in parallel...')
+      ;(async () => {
+        try {
+          const res = await transcribeWithWhisperX(audioBuf)
+          const whisperxPath = `transcripts/${organizationId}/${sessionId}.whisperx.json`
+          await uploadText(bucket, whisperxPath, JSON.stringify(res.json, null, 2), 'application/json')
+          console.log('[processSession] WhisperX JSON uploaded', { whisperxPath })
+          // Also store a plain-text version for side-by-side comparison
+          try {
+            const whisperxText = (Array.isArray(res?.json?.segments) ? res.json.segments : []).map(s => s?.text || '').filter(Boolean).join(' ').trim()
+            const whisperxTextPath = `transcripts/${organizationId}/${sessionId}.whisperx.txt`
+            await uploadText(bucket, whisperxTextPath, whisperxText, 'text/plain; charset=utf-8')
+            console.log('[processSession] WhisperX TXT uploaded', { whisperxTextPath })
+            const supa = supabaseService()
+            const expiresIn = Number(process.env.SIGNED_URL_EXPIRES || 3600)
+            const [{ data: jSigned }, { data: tSigned }] = await Promise.all([
+              supa.storage.from(bucket).createSignedUrl(whisperxPath, expiresIn),
+              supa.storage.from(bucket).createSignedUrl(whisperxTextPath, expiresIn),
+            ])
+            if (jSigned?.signedUrl) console.log(`[processSession] Signed URL (WhisperX JSON, ${expiresIn}s):`, jSigned.signedUrl)
+            if (tSigned?.signedUrl) console.log(`[processSession] Signed URL (WhisperX TXT, ${expiresIn}s):`, tSigned.signedUrl)
+          } catch (e) {
+            console.warn('[processSession] WhisperX TXT or signed URLs failed', e?.message)
+          }
+          try {
+            await updateSession(sessionId, { whisperx_json_path: whisperxPath })
+          } catch (e) {
+            console.warn('[processSession] Could not persist whisperx_json_path (add column to sessions)', e?.message)
+          }
+        } catch (e) {
+          console.warn('[processSession] WhisperX failed', e?.message)
+        }
+      })()
+    } catch (e) {
+      console.warn('[processSession] WhisperX launch error', e?.message)
+    }
     // Do not finalize here; recovery/transcribe loop will complete indexing + embeddings
     return
 

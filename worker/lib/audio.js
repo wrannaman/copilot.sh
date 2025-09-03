@@ -207,8 +207,15 @@ export async function transcribeWithWhisperX(buffer) {
   const scriptPath = path.join(process.cwd(), 'whisper', 'whisperx_transcribe.py')
   const pythonBin = process.env.WHISPERX_PYTHON || 'python3'
 
+  try { await fs.access(scriptPath) } catch { throw new Error(`whisperx script not found at ${scriptPath}`) }
+
+  console.log('[whisperx] launching', { pythonBin, scriptPath, audioFileBytes: buffer.length })
+
   try {
-    const { stdout } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })
+    const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })
+    if (stderr && stderr.trim().length > 0) {
+      console.log('[whisperx][stderr]', stderr.slice(0, 2000))
+    }
     let parsed
     try {
       parsed = JSON.parse(stdout)
