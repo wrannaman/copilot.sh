@@ -59,11 +59,10 @@ def main():
             diarize_segments = diarizer(audio)
             diarized = whisperx.assign_word_speakers(diarize_segments, aligned)
 
-        # Minimal JSON payload similar to WhisperX's structure
+        # Minimal JSON payload (segments contain speaker info; diarize_segments may be a DataFrame → omit)
         out = {
             "language": lang,
             "segments": diarized.get("segments", []),
-            "diarize_segments": diarize_segments if diarize_segments is not None else [],
         }
 
         # Ensure words exist as list for each segment
