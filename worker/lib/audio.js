@@ -232,15 +232,24 @@ export async function transcribeWithWhisperX(buffer) {
   console.log('[whisperx] command:', cmd, { cwd: process.cwd(), hasHF: !!(process.env.HUGGING_FACE_HUB_TOKEN || process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN) })
 
   try {
-    const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })
+    const execOpts = { maxBuffer: 1024 * 1024 * 200, env: { ...process.env, PYTHONUNBUFFERED: '1' } }
+    const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], execOpts)
     if (stderr && stderr.trim().length > 0) {
       console.log('[whisperx][stderr]', stderr.slice(0, 2000))
     }
     let parsed
+    const outStr = String(stdout || '').trim()
     try {
-      parsed = JSON.parse(stdout)
+      if (!outStr) throw new Error('empty stdout')
+      parsed = JSON.parse(outStr)
     } catch (e) {
-      throw new Error(`failed to parse whisperx json: ${e?.message}`)
+      // Attempt to extract JSON object from noisy stdout
+      const m = outStr.match(/\{[\s\S]*\}/)
+      if (m) {
+        try { parsed = JSON.parse(m[0]) } catch (e2) { throw new Error(`failed to parse whisperx json (extracted): ${e2?.message}`) }
+      } else {
+        throw new Error(`failed to parse whisperx json: ${e?.message}`)
+      }
     }
 
     const segments = Array.isArray(parsed?.segments) ? parsed.segments : []

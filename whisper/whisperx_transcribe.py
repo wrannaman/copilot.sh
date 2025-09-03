@@ -29,6 +29,15 @@ def main():
     except Exception:
         device = "cpu"
 
+    # Cache dirs to avoid re-downloading models each run
+    cache_root = os.environ.get("WHISPERX_CACHE_DIR", os.path.expanduser("~/.cache/whisperx"))
+    os.makedirs(cache_root, exist_ok=True)
+    os.environ.setdefault("HF_HOME", os.path.join(cache_root, "hf"))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(cache_root, "hf"))
+    os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(cache_root, "transformers"))
+    os.environ.setdefault("TORCH_HOME", os.path.join(cache_root, "torch"))
+    os.environ.setdefault("XDG_CACHE_HOME", cache_root)
+
     model_id = os.environ.get("WHISPERX_MODEL_ID", "large-v3")
     batch_size = int(os.environ.get("WHISPERX_BATCH_SIZE", "8"))
     beam_size = int(os.environ.get("WHISPERX_BEAM_SIZE", "5"))
@@ -40,7 +49,7 @@ def main():
     )
 
     try:
-        model = whisperx.load_model(model_id, device, compute_type=compute_type)
+        model = whisperx.load_model(model_id, device, compute_type=compute_type, download_root=cache_root)
         audio = whisperx.load_audio(audio_path)
 
         # 1) ASR (use higher beam size for accuracy)
@@ -48,7 +57,11 @@ def main():
 
         # 2) Alignment
         lang = asr.get("language")
-        align_model, metadata = whisperx.load_align_model(language_code=lang, device=device)
+        # Alignment uses HF caches set above; some versions also accept model_dir
+        try:
+            align_model, metadata = whisperx.load_align_model(language_code=lang, device=device, model_dir=cache_root)
+        except TypeError:
+            align_model, metadata = whisperx.load_align_model(language_code=lang, device=device)
         aligned = whisperx.align(asr["segments"], align_model, metadata, audio, device, return_char_alignments=False)
 
         # 3) Diarization
