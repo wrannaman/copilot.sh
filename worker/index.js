@@ -599,3 +599,151 @@ async function pollWhisperXSessions() {
 setInterval(pollAndStart, POLL_INTERVAL_MS)
 setInterval(pollTranscribingSessions, POLL_INTERVAL_MS * 2) // Check recovery less frequently
 setInterval(pollWhisperXSessions, POLL_INTERVAL_MS * 2)
+// Recovery: sessions stuck in summarizing
+async function pollSummarizingSessions() {
+  try {
+    const supa = supabaseService()
+    const { data: rows } = await supa
+      .from('sessions')
+      .select('id, organization_id, transcript_storage_path, summary_text, summary_embedding, summary_prompt')
+      .eq('status', 'summarizing')
+      .limit(25)
+
+    if (!rows || rows.length === 0) return
+
+    console.log(`[summarize] Recovery candidates: ${rows.length}`)
+
+    for (const row of rows) {
+      if (summarizingSessions.has(row.id)) continue
+      summarizingSessions.add(row.id)
+      ;(async () => {
+        try {
+          const bucket = 'copilot.sh'
+          const sessionId = row.id
+          const organizationId = row.organization_id
+
+          // If summary_text already persisted, mark ready
+          if (row.summary_text && String(row.summary_text).trim().length > 0) {
+            try { await updateSession(sessionId, { status: 'ready' }) } catch {}
+            console.log('[summarize][recovery] marked ready from existing summary_text', { sessionId })
+            return
+          }
+
+          // If summary JSON exists in storage, use it to persist fields and mark ready
+          const summaryPath = `summaries/${organizationId}/${sessionId}.json`
+          let storageSummary = null
+          try {
+            const buf = await downloadFile(bucket, summaryPath)
+            const text = buf.toString('utf8')
+            storageSummary = JSON.parse(text)
+          } catch {}
+
+          if (storageSummary) {
+            const summaryText = (storageSummary?.summary || '').toString()
+            let summaryEmbedding = null
+            if (summaryText && summaryText.trim().length > 0) {
+              try {
+                const [vec] = await embedTexts([summaryText])
+                if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
+              } catch (e) {
+                console.warn('[summarize][recovery] embedding failed', e?.message)
+              }
+            }
+            try {
+              await updateSession(sessionId, {
+                summary_text: summaryText,
+                structured_data: {
+                  action_items: Array.isArray(storageSummary?.action_items) ? storageSummary.action_items : [],
+                  topics: Array.isArray(storageSummary?.topics) ? storageSummary.topics : []
+                },
+                summary_embedding: summaryEmbedding,
+                status: 'ready'
+              })
+              console.log('[summarize][recovery] persisted from storage JSON and marked ready', { sessionId })
+              return
+            } catch (e) {
+              console.warn('[summarize][recovery] failed to persist from storage JSON', e?.message)
+            }
+          }
+
+          // Else re-summarize using transcript
+          let transcriptPath = row.transcript_storage_path || `transcripts/${organizationId}/${sessionId}.txt`
+          let transcript = ''
+          try {
+            const buf = await downloadFile(bucket, transcriptPath)
+            const raw = buf.toString('utf8')
+            transcript = raw
+              .split('\n')
+              .map(line => {
+                if (line.startsWith('_TIMESTAMP_')) {
+                  const idx = line.indexOf('|'); return idx > -1 ? line.slice(idx + 1) : line
+                }
+                return line
+              })
+              .join('\n')
+              .trim()
+          } catch (e) {
+            console.warn('[summarize][recovery] missing transcript, cannot re-summarize', { sessionId, transcriptPath })
+            return
+          }
+
+          // Load prompts
+          let userPrompt = ''
+          let orgPrompt = ''
+          let orgTopics = []
+          let orgActionItems = []
+          try {
+            const { data: org } = await supa.from('org').select('settings').eq('id', organizationId).maybeSingle()
+            if (org?.settings?.summary_prefs?.prompt) orgPrompt = String(org.settings.summary_prefs.prompt)
+            if (Array.isArray(org?.settings?.summary_prefs?.topics)) orgTopics = org.settings.summary_prefs.topics
+            if (Array.isArray(org?.settings?.summary_prefs?.action_items)) orgActionItems = org.settings.summary_prefs.action_items
+          } catch {}
+          try {
+            const { data: ses } = await supa.from('sessions').select('summary_prompt').eq('id', sessionId).maybeSingle()
+            userPrompt = (ses?.summary_prompt || '').toString()
+          } catch {}
+
+          const guidanceParts = []
+          if (orgPrompt && orgPrompt.trim()) guidanceParts.push(orgPrompt.trim())
+          if (userPrompt && userPrompt.trim()) guidanceParts.push(userPrompt.trim())
+          if (orgTopics.length) guidanceParts.push(`Emphasize these topics: ${orgTopics.join(', ')}`)
+          if (orgActionItems.length) guidanceParts.push(`Prioritize action items related to: ${orgActionItems.join(', ')}`)
+          const instructions = guidanceParts.join('\n')
+
+          const object = await summarizeTranscript(transcript, instructions)
+          await uploadText(bucket, summaryPath, JSON.stringify(object, null, 2), 'application/json')
+
+          let summaryEmbedding = null
+          const summaryText = (object?.summary || '').toString()
+          if (summaryText && summaryText.trim().length > 0) {
+            try {
+              const [vec] = await embedTexts([summaryText])
+              if (Array.isArray(vec) && vec.length) summaryEmbedding = vec
+            } catch (e) {
+              console.warn('[summarize][recovery] embedding failed', e?.message)
+            }
+          }
+
+          await updateSession(sessionId, {
+            summary_text: summaryText,
+            structured_data: {
+              action_items: Array.isArray(object?.action_items) ? object.action_items : [],
+              topics: Array.isArray(object?.topics) ? object.topics : []
+            },
+            summary_embedding: summaryEmbedding,
+            status: 'ready'
+          })
+          console.log('[summarize][recovery] re-summarized and marked ready', { sessionId })
+        } catch (e) {
+          console.warn('[summarize][recovery] failed', e?.message)
+        } finally {
+          summarizingSessions.delete(row.id)
+        }
+      })()
+    }
+  } catch (e) {
+    console.warn('[summarize] recovery poll error', e?.message)
+  }
+}
+
+setInterval(pollSummarizingSessions, POLL_INTERVAL_MS * 2)

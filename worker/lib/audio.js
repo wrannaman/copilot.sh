@@ -225,6 +225,8 @@ export async function transcribeWithWhisperX(buffer) {
   }
   const pythonBin = process.env.WHISPERX_PYTHON || 'python3'
 
+  console.log('[whisperx] pythonBin', pythonBin)
+
   const cmd = `${pythonBin} ${scriptPath} ${audioFile}`
   console.log('[whisperx] launching', { pythonBin, scriptPath, candidates, audioFileBytes: buffer.length })
   console.log('[whisperx] command:', cmd, { cwd: process.cwd(), hasHF: !!(process.env.HUGGING_FACE_HUB_TOKEN || process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN) })
