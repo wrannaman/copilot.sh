@@ -29,8 +29,9 @@ def main():
     except Exception:
         device = "cpu"
 
-    model_id = os.environ.get("WHISPERX_MODEL_ID", "large-v2")
+    model_id = os.environ.get("WHISPERX_MODEL_ID", "large-v3")
     batch_size = int(os.environ.get("WHISPERX_BATCH_SIZE", "8"))
+    beam_size = int(os.environ.get("WHISPERX_BEAM_SIZE", "5"))
     compute_type = "float16" if device == "cuda" else os.environ.get("WHISPERX_COMPUTE_TYPE", "int8")
     hf_token = (
         os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -42,8 +43,8 @@ def main():
         model = whisperx.load_model(model_id, device, compute_type=compute_type)
         audio = whisperx.load_audio(audio_path)
 
-        # 1) ASR
-        asr = model.transcribe(audio, batch_size=batch_size)
+        # 1) ASR (use higher beam size for accuracy)
+        asr = model.transcribe(audio, batch_size=batch_size, beam_size=beam_size)
 
         # 2) Alignment
         lang = asr.get("language")
