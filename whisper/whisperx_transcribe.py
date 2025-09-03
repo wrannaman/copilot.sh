@@ -3,10 +3,12 @@ import os
 import sys
 import json
 import pathlib
+import logging
 
 # Minimal WhisperX runner with diarization
 
 def main():
+    logging.basicConfig(level=logging.INFO, format='[whisperx] %(message)s')
     if len(sys.argv) < 2:
         print("Usage: whisperx_transcribe.py <audio_path>", file=sys.stderr)
         sys.exit(1)
@@ -26,6 +28,7 @@ def main():
     try:
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        logging.info(f"device={device} torch={getattr(torch, '__version__', 'unknown')}")
     except Exception:
         device = "cpu"
 
@@ -49,11 +52,17 @@ def main():
     )
 
     try:
+        logging.info(f"cache_root={cache_root}")
+        logging.info(f"load_model id={model_id} compute_type={compute_type} batch_size={batch_size} beam_size={beam_size}")
         model = whisperx.load_model(model_id, device, compute_type=compute_type, download_root=cache_root)
         audio = whisperx.load_audio(audio_path)
 
         # 1) ASR (use higher beam size for accuracy)
-        asr = model.transcribe(audio, batch_size=batch_size, beam_size=beam_size)
+        try:
+            asr = model.transcribe(audio, batch_size=batch_size, beam_size=beam_size)
+        except TypeError:
+            logging.info("beam_size not supported by backend; using default")
+            asr = model.transcribe(audio, batch_size=batch_size)
 
         # 2) Alignment
         lang = asr.get("language")
@@ -86,6 +95,7 @@ def main():
 
         print(json.dumps(out, ensure_ascii=False))
     except Exception as e:
+        logging.exception("whisperx failure")
         print(json.dumps({
             "error": f"WhisperX processing failed: {e}" 
         }), flush=True)
