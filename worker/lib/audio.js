@@ -225,7 +225,9 @@ export async function transcribeWithWhisperX(buffer) {
   }
   const pythonBin = process.env.WHISPERX_PYTHON || 'python3'
 
+  const cmd = `${pythonBin} ${scriptPath} ${audioFile}`
   console.log('[whisperx] launching', { pythonBin, scriptPath, candidates, audioFileBytes: buffer.length })
+  console.log('[whisperx] command:', cmd, { cwd: process.cwd(), hasHF: !!(process.env.HUGGING_FACE_HUB_TOKEN || process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN) })
 
   try {
     const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })
@@ -244,7 +246,12 @@ export async function transcribeWithWhisperX(buffer) {
 
     return { text, json: parsed }
   } catch (error) {
-    console.warn('[whisperx] failed:', error?.message)
+    const code = typeof error?.code !== 'undefined' ? error.code : null
+    console.warn('[whisperx] failed:', error?.message, { code })
+    if (error?.stderr) {
+      const tail = String(error.stderr).slice(-2000)
+      console.warn('[whisperx][stderr-tail]', tail)
+    }
     throw error
   }
 }

@@ -2,7 +2,7 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 import { loadCombinedOrConcat, transcribeWhole, transcribeWithWhisperX } from './lib/audio.js'
-import { supabaseService, uploadText, updateSession, uploadAudioToGCS, deleteFromGCS } from './lib/services.js'
+import { supabaseService, uploadText, updateSession, uploadAudioToGCS, deleteFromGCS, downloadFile } from './lib/services.js'
 import { embedTexts } from './lib/embedding.js'
 import { processAndChunkTranscript } from './lib/chunks.js'
 import { summarizeTranscript } from './lib/summarize.js'
@@ -361,6 +361,7 @@ const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 10) // Incre
 const runningSessions = new Set()
 const transcribingSessions = new Set() // Track sessions waiting for GCP
 const whisperxSessions = new Set() // Track WhisperX runs to avoid duplicates
+const summarizingSessions = new Set() // Track summarization recoveries to avoid duplicates
 
 async function runWhisperX({ sessionId, organizationId, audioBuf }) {
   if (whisperxSessions.has(sessionId)) return
