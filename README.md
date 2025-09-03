@@ -1,6 +1,6 @@
 # copilot.sh
 
-Your open-source AI memory for every conversation.
+Your open-source AI memory for every conversation....
 
 🪩 Record, summarize, and search your most important calls and meetings.
 
