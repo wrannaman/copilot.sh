@@ -209,11 +209,13 @@ export async function transcribeWithWhisperX(buffer) {
   // - ./whisper relative to process cwd
   // - ../../whisper relative to this module file
   const moduleDir = path.dirname(new URL(import.meta.url).pathname)
+  const envScript = process.env.WHISPERX_SCRIPT
   const candidates = [
+    envScript || null,
     path.resolve(process.cwd(), '..', 'whisper', 'whisperx_transcribe.py'),
     path.resolve(process.cwd(), 'whisper', 'whisperx_transcribe.py'),
     path.resolve(moduleDir, '..', '..', 'whisper', 'whisperx_transcribe.py')
-  ]
+  ].filter(Boolean)
   let scriptPath = null
   for (const c of candidates) {
     try { await fs.access(c); scriptPath = c; break } catch {}
