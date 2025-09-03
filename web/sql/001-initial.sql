@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   transcript_storage_path TEXT, -- path to transcript file in storage
   raw_transcript_path TEXT,    -- path to raw transcript JSON with timestamps/confidence
   whisperx_json_path TEXT,    -- path to whisperx JSON file with timestamps/confidence
+  whisperx_status TEXT,
+  whisperx_text_path TEXT,
+  whisperx_started_at TIMESTAMPTZ,
+  whisperx_error TEXT,
   error_message TEXT,
   calendar_event_id TEXT,      -- external Google event id (nullable)
   calendar_anchor TIMESTAMPTZ, -- start time anchor for the session
@@ -845,3 +849,4 @@ GRANT EXECUTE ON FUNCTION hybrid_search(UUID, VECTOR, TEXT, INT) TO authenticate
 -- ----------------------------------------------------------------------------
 -- Done
 -- ----------------------------------------------------------------------------
+
