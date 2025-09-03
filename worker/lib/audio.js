@@ -204,12 +204,26 @@ export async function transcribeWithWhisperX(buffer) {
   const audioFile = path.join(tmpDir, `audio.wav`)
   await fs.writeFile(audioFile, buffer)
 
-  const scriptPath = path.join(process.cwd(), 'whisper', 'whisperx_transcribe.py')
+  // Resolve script in several likely locations:
+  // - ../whisper relative to process cwd
+  // - ./whisper relative to process cwd
+  // - ../../whisper relative to this module file
+  const moduleDir = path.dirname(new URL(import.meta.url).pathname)
+  const candidates = [
+    path.resolve(process.cwd(), '..', 'whisper', 'whisperx_transcribe.py'),
+    path.resolve(process.cwd(), 'whisper', 'whisperx_transcribe.py'),
+    path.resolve(moduleDir, '..', '..', 'whisper', 'whisperx_transcribe.py')
+  ]
+  let scriptPath = null
+  for (const c of candidates) {
+    try { await fs.access(c); scriptPath = c; break } catch {}
+  }
+  if (!scriptPath) {
+    throw new Error(`whisperx script not found in candidates: ${candidates.join(', ')}`)
+  }
   const pythonBin = process.env.WHISPERX_PYTHON || 'python3'
 
-  try { await fs.access(scriptPath) } catch { throw new Error(`whisperx script not found at ${scriptPath}`) }
-
-  console.log('[whisperx] launching', { pythonBin, scriptPath, audioFileBytes: buffer.length })
+  console.log('[whisperx] launching', { pythonBin, scriptPath, candidates, audioFileBytes: buffer.length })
 
   try {
     const { stdout, stderr } = await execFile(pythonBin, [scriptPath, audioFile], { maxBuffer: 1024 * 1024 * 200 })

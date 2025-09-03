@@ -202,36 +202,7 @@ async function processSession({ sessionId, organizationId }) {
     try {
       console.log('[processSession] Launching WhisperX in parallel...')
       ;(async () => {
-        try {
-          const res = await transcribeWithWhisperX(audioBuf)
-          const whisperxPath = `transcripts/${organizationId}/${sessionId}.whisperx.json`
-          await uploadText(bucket, whisperxPath, JSON.stringify(res.json, null, 2), 'application/json')
-          console.log('[processSession] WhisperX JSON uploaded', { whisperxPath })
-          // Also store a plain-text version for side-by-side comparison
-          try {
-            const whisperxText = (Array.isArray(res?.json?.segments) ? res.json.segments : []).map(s => s?.text || '').filter(Boolean).join(' ').trim()
-            const whisperxTextPath = `transcripts/${organizationId}/${sessionId}.whisperx.txt`
-            await uploadText(bucket, whisperxTextPath, whisperxText, 'text/plain; charset=utf-8')
-            console.log('[processSession] WhisperX TXT uploaded', { whisperxTextPath })
-            const supa = supabaseService()
-            const expiresIn = Number(process.env.SIGNED_URL_EXPIRES || 3600)
-            const [{ data: jSigned }, { data: tSigned }] = await Promise.all([
-              supa.storage.from(bucket).createSignedUrl(whisperxPath, expiresIn),
-              supa.storage.from(bucket).createSignedUrl(whisperxTextPath, expiresIn),
-            ])
-            if (jSigned?.signedUrl) console.log(`[processSession] Signed URL (WhisperX JSON, ${expiresIn}s):`, jSigned.signedUrl)
-            if (tSigned?.signedUrl) console.log(`[processSession] Signed URL (WhisperX TXT, ${expiresIn}s):`, tSigned.signedUrl)
-          } catch (e) {
-            console.warn('[processSession] WhisperX TXT or signed URLs failed', e?.message)
-          }
-          try {
-            await updateSession(sessionId, { whisperx_json_path: whisperxPath })
-          } catch (e) {
-            console.warn('[processSession] Could not persist whisperx_json_path (add column to sessions)', e?.message)
-          }
-        } catch (e) {
-          console.warn('[processSession] WhisperX failed', e?.message)
-        }
+        await runWhisperX({ sessionId, organizationId, audioBuf })
       })()
     } catch (e) {
       console.warn('[processSession] WhisperX launch error', e?.message)
@@ -356,7 +327,7 @@ async function checkTranscriptionStatus({ sessionId, organizationId, operationNa
         results = []
       }
 
-      console.log('[checkTranscription] Results', results)
+      // console.log('[checkTranscription] Results', results)
 
       const text = results.map(r => r.alternatives?.[0]?.transcript || '').filter(Boolean).join(' ').trim()
 
@@ -389,6 +360,51 @@ const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS || 5000)
 const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 10) // Increased since GCP does the heavy lifting
 const runningSessions = new Set()
 const transcribingSessions = new Set() // Track sessions waiting for GCP
+const whisperxSessions = new Set() // Track WhisperX runs to avoid duplicates
+
+async function runWhisperX({ sessionId, organizationId, audioBuf }) {
+  if (whisperxSessions.has(sessionId)) return
+  whisperxSessions.add(sessionId)
+  try {
+    try {
+      await updateSession(sessionId, { whisperx_status: 'running', whisperx_started_at: new Date().toISOString(), whisperx_error: null })
+    } catch { }
+
+    console.log('[whisperx] starting for session', sessionId)
+    const res = await transcribeWithWhisperX(audioBuf)
+    const whisperxPath = `transcripts/${organizationId}/${sessionId}.whisperx.json`
+    await uploadText('copilot.sh', whisperxPath, JSON.stringify(res.json, null, 2), 'application/json')
+    const whisperxText = (Array.isArray(res?.json?.segments) ? res.json.segments : []).map(s => s?.text || '').filter(Boolean).join(' ').trim()
+    const whisperxTextPath = `transcripts/${organizationId}/${sessionId}.whisperx.txt`
+    await uploadText('copilot.sh', whisperxTextPath, whisperxText, 'text/plain; charset=utf-8')
+
+    // Signed URLs for convenience
+    try {
+      const supa = supabaseService()
+      const expiresIn = Number(process.env.SIGNED_URL_EXPIRES || 3600)
+      const [{ data: jSigned }, { data: tSigned }] = await Promise.all([
+        supa.storage.from('copilot.sh').createSignedUrl(whisperxPath, expiresIn),
+        supa.storage.from('copilot.sh').createSignedUrl(whisperxTextPath, expiresIn),
+      ])
+      if (jSigned?.signedUrl) console.log(`[whisperx] Signed URL (JSON, ${expiresIn}s):`, jSigned.signedUrl)
+      if (tSigned?.signedUrl) console.log(`[whisperx] Signed URL (TXT, ${expiresIn}s):`, tSigned.signedUrl)
+    } catch (e) {
+      console.warn('[whisperx] failed to create signed URLs', e?.message)
+    }
+
+    try {
+      await updateSession(sessionId, { whisperx_status: 'done', whisperx_json_path: whisperxPath, whisperx_text_path: whisperxTextPath })
+    } catch (e) {
+      console.warn('[whisperx] failed to persist paths/status', e?.message)
+    }
+    console.log('[whisperx] completed for session', sessionId)
+  } catch (e) {
+    console.warn('[whisperx] error for session', sessionId, e?.message)
+    try { await updateSession(sessionId, { whisperx_status: 'error', whisperx_error: String(e?.message || 'whisperx error') }) } catch {}
+  } finally {
+    whisperxSessions.delete(sessionId)
+  }
+}
 
 async function pollAndStart() {
   try {
@@ -541,6 +557,44 @@ async function pollTranscribingSessions() {
   }
 }
 
+// Recovery: kick WhisperX for sessions stuck without WhisperX outputs
+async function pollWhisperXSessions() {
+  try {
+    const supa = supabaseService()
+    const { data: transcribing } = await supa
+      .from('sessions')
+      .select('id, organization_id, whisperx_status, whisperx_json_path')
+      .eq('status', 'transcribing')
+      .limit(50)
+
+    const candidates = (transcribing || []).filter(s => !s.whisperx_json_path && s.whisperx_status !== 'running')
+    if (!candidates.length) return
+
+    console.log(`[whisperx] Recovery candidates: ${candidates.length}`)
+
+    for (const s of candidates) {
+      if (whisperxSessions.has(s.id)) continue
+      // Attempt recovery run
+      whisperxSessions.add(s.id)
+      ;(async () => {
+        try {
+          console.log('[whisperx][recovery] starting for session', s.id)
+          // Load audio buffer again
+          const { buffer } = await loadCombinedOrConcat('copilot.sh', s.organization_id, s.id)
+          await runWhisperX({ sessionId: s.id, organizationId: s.organization_id, audioBuf: buffer })
+        } catch (e) {
+          console.warn('[whisperx][recovery] failed for session', s.id, e?.message)
+        } finally {
+          whisperxSessions.delete(s.id)
+        }
+      })()
+    }
+  } catch (e) {
+    console.warn('[whisperx] recovery poll error', e?.message)
+  }
+}
+
 // Start both polling loops
 setInterval(pollAndStart, POLL_INTERVAL_MS)
 setInterval(pollTranscribingSessions, POLL_INTERVAL_MS * 2) // Check recovery less frequently
+setInterval(pollWhisperXSessions, POLL_INTERVAL_MS * 2)
