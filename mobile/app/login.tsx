@@ -305,7 +305,7 @@ export default function LoginScreen() {
                   buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
                   buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
                   cornerRadius={16}
-                  style={{ width: '100%', height: 52, shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }}
+                  style={{ width: '100%', height: 52 }}
                   onPress={() => signInWithProvider('apple')}
                 />
               ) : (

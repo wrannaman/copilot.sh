@@ -143,6 +143,43 @@ export default function SettingsScreen() {
     router.replace('/login');
   }
 
+  async function confirmAndDeleteAll() {
+    try {
+      Alert.alert(
+        'Delete all my data',
+        'This will delete your sessions, files, and your account. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const supabase = getSupabase();
+                const { data: sess } = await supabase.auth.getSession();
+                const accessToken = sess?.session?.access_token || '';
+                const api = (globalThis as any).__COPILOT_API_BASE_URL__ || 'http://localhost:3000';
+                const res = await fetch(`${api}/api/user/purge`, {
+                  method: 'POST',
+                  headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+                });
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({} as any));
+                  throw new Error(body?.message || `Failed (${res.status})`);
+                }
+              } catch (e: any) {
+                Alert.alert('Delete failed', e?.message || 'Unable to delete');
+                return;
+              }
+              try { await signOut(); } catch {}
+              Alert.alert('Deleted', 'Your account and data have been removed.');
+            },
+          },
+        ]
+      );
+    } catch {}
+  }
+
   if (!authChecked) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -251,6 +288,15 @@ export default function SettingsScreen() {
           >
             <ThemedText className="font-semibold text-base" style={{ color: '#ffffff' }}>
               Sign Out
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            onPress={confirmAndDeleteAll}
+            className="w-full px-6 py-4 rounded-xl items-center justify-center bg-red-600"
+          >
+            <ThemedText className="font-semibold text-base" style={{ color: '#ffffff' }}>
+              Delete All My Data
             </ThemedText>
           </Pressable>
         </View>
