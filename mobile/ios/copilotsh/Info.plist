@@ -48,7 +48,7 @@
       <true/>
     </dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone.</string>
+    <string>Copilot uses your microphone to record conversations so they can be securely transcribed and saved to your account for later search and review.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to transcribe your speech on-device.</string>
     <key>NSUserActivityTypes</key>

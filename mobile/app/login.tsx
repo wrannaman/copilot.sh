@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, Text, TextInput, View, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native'
 import { Image } from 'expo-image'
+import { Audio } from 'expo-av'
 import * as WebBrowser from 'expo-web-browser'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
@@ -25,6 +26,16 @@ export default function LoginScreen() {
   const isReviewEmail = email.trim().toLowerCase() === specialEmail
   const isSmallScreen = height < 700
 
+  // Local-only trial recording state (one clip, max 30s)
+  const [recording, setRecording] = useState<Audio.Recording | null>(null)
+  const [recordingUri, setRecordingUri] = useState<string | null>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const elapsedIntervalRef = useRef<any>(null)
+  const MAX_MS = 30_000
+  const [isPlaying, setIsPlaying] = useState(false)
+  const playbackSoundRef = useRef<Audio.Sound | null>(null)
+
   useEffect(() => {
     AppleAuthentication.isAvailableAsync()
       .then((available) => {
@@ -44,12 +55,12 @@ export default function LoginScreen() {
         const { data } = await supabase.auth.getSession()
         console.log('[auth] initial session present?', !!data?.session)
         if (isMounted && data?.session) {
-          router.replace('/(tabs)/record')
+          handleSignedIn()
         }
       })()
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('[auth] onAuthStateChange', event, 'hasSession?', !!session)
-      if (session) router.replace('/(tabs)/record')
+      if (session) handleSignedIn()
     })
     return () => {
       isMounted = false
@@ -60,6 +71,113 @@ export default function LoginScreen() {
   const isAuthUrl = (u?: string | null) => {
     if (!u) return false
     return u.startsWith('copilotsh://auth')
+  }
+
+  function formatTime(ms: number) {
+    const totalSec = Math.floor(ms / 1000)
+    const m = Math.floor(totalSec / 60)
+    const s = totalSec % 60
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
+
+  async function startTrialRecording() {
+    try {
+      if (isRecording || recordingUri) return
+      const perm = await Audio.requestPermissionsAsync()
+      if (!perm.granted) {
+        Alert.alert('Permission required', 'Microphone permission is needed to record.')
+        return
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY)
+      setRecording(recording)
+      setIsRecording(true)
+      setElapsedMs(0)
+      elapsedIntervalRef.current = setInterval(() => {
+        setElapsedMs((prev) => {
+          const next = prev + 200
+          if (next >= 30000) {
+            stopTrialRecording()
+          }
+          return next
+        })
+      }, 200)
+    } catch (e: any) {
+      console.log('[trial] start error', e?.message)
+      Alert.alert('Error', e?.message || 'Failed to start recording')
+    }
+  }
+
+  async function stopTrialRecording() {
+    try {
+      if (!recording) return
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current)
+        elapsedIntervalRef.current = null
+      }
+      await recording.stopAndUnloadAsync()
+      setIsRecording(false)
+      const uri = recording.getURI()
+      setRecording(null)
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false })
+      if (uri) setRecordingUri(uri)
+    } catch (e: any) {
+      console.log('[trial] stop error', e?.message)
+      Alert.alert('Error', e?.message || 'Failed to stop recording')
+    }
+  }
+
+  async function stopPlayback() {
+    try {
+      if (playbackSoundRef.current) {
+        try { await playbackSoundRef.current.stopAsync() } catch {}
+        try { await playbackSoundRef.current.unloadAsync() } catch {}
+        playbackSoundRef.current = null
+      }
+    } finally {
+      setIsPlaying(false)
+    }
+  }
+
+  async function togglePlayTrialRecording() {
+    try {
+      if (!recordingUri) return
+      if (isPlaying) {
+        await stopPlayback()
+        return
+      }
+      // Ensure any previous sound is cleaned up
+      await stopPlayback()
+      const { sound } = await Audio.Sound.createAsync({ uri: recordingUri })
+      playbackSoundRef.current = sound
+      setIsPlaying(true)
+      sound.setOnPlaybackStatusUpdate((status: any) => {
+        if (status && status.isLoaded && status.didJustFinish) {
+          stopPlayback()
+        }
+      })
+      await sound.playAsync()
+    } catch (e: any) {
+      console.log('[trial] play error', e?.message)
+      Alert.alert('Error', e?.message || 'Failed to play recording')
+      setIsPlaying(false)
+    }
+  }
+
+  async function deleteTrialRecording() {
+    await stopPlayback()
+    setRecordingUri(null)
+    setElapsedMs(0)
+  }
+
+  function handleSignedIn() {
+    // Stop any playback and clear trial
+    stopPlayback().catch(() => {})
+    setRecording(null)
+    setRecordingUri(null)
+    setIsRecording(false)
+    setElapsedMs(0)
+    router.replace('/(tabs)/record')
   }
 
   // Handle deep link to complete OAuth (and magic link) by exchanging code for session
@@ -184,7 +302,7 @@ export default function LoginScreen() {
     <ScrollView className="flex-1 bg-slate-50 dark:bg-gray-900">
       <View className="flex-1 justify-center px-8 py-12 min-h-screen">
         {/* Logo Section */}
-        <View className="items-center mb-10" style={{ marginBottom: isSmallScreen ? 16 : 40 }}>
+        <View className="items-center mb-10" style={{ marginBottom: isSmallScreen ? 16 : 16 }}>
           <View className="bg-white dark:bg-gray-800 rounded-3xl p-6  mb-8">
             <Image
               source={colorScheme === 'dark' ? require('@/assets/images/icon-white.png') : require('@/assets/images/icon.png')}
@@ -197,17 +315,69 @@ export default function LoginScreen() {
             copilot.sh
           </Text>
           <Text className="text-lg text-gray-600 dark:text-gray-400 text-center font-medium">
-            Always-on meeting recorder
+            The simplest way to record and transcribe your meetings
           </Text>
+        </View>
+
+        {/* Local trial recording (no account needed) */}
+        <View className="mt-0 bg-white dark:bg-gray-800/50 rounded-2xl p-6  backdrop-blur-sm">
+          <View className="gap-3">
+            <Text className="text-gray-800 dark:text-gray-200 font-semibold text-base">
+              Try recording without an account
+            </Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-sm">
+              Record one 30s clip locally. Not uploaded. Create an account to save and transcribe.
+            </Text>
+
+            {!recordingUri ? (
+              <View className="gap-3">
+                {!isRecording ? (
+                  <Pressable
+                    onPress={startTrialRecording}
+                    className="w-full p-4 "
+                    style={{ borderRadius: 16, backgroundColor: '#0EA5E9' }}
+                  >
+                    <Text className="text-white text-center font-semibold text-base">Record 30s test</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={stopTrialRecording}
+                    className="w-full p-4 "
+                    style={{ borderRadius: 16, backgroundColor: '#EF4444' }}
+                  >
+                    <Text className="text-white text-center font-semibold text-base">Stop ({formatTime(elapsedMs)} / 00:30)</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : (
+              <View className="gap-3">
+                <Pressable
+                  onPress={togglePlayTrialRecording}
+                  className="w-full p-4 "
+                  style={{ borderRadius: 16, backgroundColor: isPlaying ? '#EF4444' : '#10B981' }}
+                >
+                  <Text className="text-white text-center font-semibold text-base">{isPlaying ? 'Stop playback' : 'Play test clip'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={deleteTrialRecording}
+                  className="w-full p-3 "
+                  style={{ borderRadius: 16, backgroundColor: '#374151' }}
+                >
+                  <Text className="text-white text-center font-medium text-base">Delete test clip</Text>
+                </Pressable>
+                <Text className="text-gray-500 dark:text-gray-400 text-xs text-center">
+                  To save and transcribe recordings, create a free account above.
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
 
         {/* Sign In Section */}
         <View className="items-center mb-8">
-          <Text className="text-2xl font-semibold text-gray-800 dark:text-gray-200 text-center mb-2">
-            Welcome back
-          </Text>
-          <Text className="text-gray-500 dark:text-gray-400 text-center">
-            Sign in to continue recording
+
+          <Text className="text-gray-500 dark:text-gray-400 text-center mt-4">
+            Sign in for more features
           </Text>
         </View>
 
