@@ -32,8 +32,10 @@ export function SearchComponent() {
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState({
     dateRange: "all", // all, today, week, month
-    sessionType: "all" // all, meetings, recordings
+    sessionType: "all", // all, meetings, recordings
+    tagIds: [] // selected tag UUIDs
   });
+  const [availableTags, setAvailableTags] = useState([]);
   const [meetingEvents, setMeetingEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
 
@@ -190,6 +192,24 @@ export function SearchComponent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results, currentOrganization?.org_id]);
 
+  // Load available tags for current org
+  useEffect(() => {
+    const run = async () => {
+      if (!currentOrganization?.org_id) { setAvailableTags([]); return; }
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('tags')
+          .select('id,name')
+          .eq('organization_id', currentOrganization.org_id)
+          .order('name_ci', { ascending: true });
+        if (!error && Array.isArray(data)) setAvailableTags(data);
+        else setAvailableTags([]);
+      } catch (_) { setAvailableTags([]); }
+    };
+    run();
+  }, [currentOrganization?.org_id]);
+
   const findEventForTimestamp = (tsMs) => {
     if (!Array.isArray(meetingEvents) || meetingEvents.length === 0) return null;
     for (const ev of meetingEvents) {
@@ -306,6 +326,55 @@ export function SearchComponent() {
                   {filter.key}
                 </Badge>
               ))}
+              {availableTags.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {availableTags.map((t) => {
+                    const isActive = selectedFilters.tagIds?.includes(t.id);
+                    return (
+                      <Badge
+                        key={t.id}
+                        variant={isActive ? 'default' : 'outline'}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          const next = new Set(selectedFilters.tagIds || []);
+                          if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                          const nextFilters = { ...selectedFilters, tagIds: Array.from(next) };
+                          setSelectedFilters(nextFilters);
+                          if (query.trim()) {
+                            (async () => {
+                              try {
+                                setLoading(true);
+                                setHasSearched(true);
+                                const response = await fetch('/api/search', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    query: query.trim(),
+                                    organizationId: currentOrganization.org_id,
+                                    filters: nextFilters,
+                                    limit: 20
+                                  })
+                                });
+                                if (!response.ok) throw new Error('Search failed');
+                                const data = await response.json();
+                                setResults(data.results || []);
+                              } catch (err) {
+                                console.error('Tag filter search error:', err);
+                                toast.error('Search failed', { description: 'Unable to search your sessions.' });
+                                setResults([]);
+                              } finally {
+                                setLoading(false);
+                              }
+                            })();
+                          }
+                        }}
+                      >
+                        #{t.name}
+                      </Badge>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </form>
         </CardContent>

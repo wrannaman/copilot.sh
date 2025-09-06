@@ -134,6 +134,34 @@ CREATE INDEX IF NOT EXISTS idx_session_chunks_ts ON session_chunks USING GIN (ts
 CREATE INDEX IF NOT EXISTS idx_session_chunks_embedding ON session_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- ----------------------------------------------------------------------------
+-- Tags (free-form, per-organization) and session_tags (join)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tags (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES org(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  name_ci TEXT GENERATED ALWAYS AS (lower(trim(name))) STORED,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, name_ci)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_org ON tags(organization_id);
+CREATE INDEX IF NOT EXISTS idx_tags_name_ci ON tags(organization_id, name_ci);
+
+CREATE TABLE IF NOT EXISTS session_tags (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (session_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_tags_session ON session_tags(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag_id);
+
+-- ----------------------------------------------------------------------------
 -- Device API Keys (for headless devices like Raspberry Pi)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS device_api_keys (
@@ -163,6 +191,8 @@ GRANT SELECT ON TABLE org_invites TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_transcripts TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_chunks TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE tags TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE session_tags TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Calendar mirror (lightweight; read-only link to GCal)
@@ -323,6 +353,8 @@ ALTER TABLE session_chunks         ENABLE ROW LEVEL SECURITY;
 -- (digests/chunks removed)
 ALTER TABLE calendar_events        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integrations           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_tags           ENABLE ROW LEVEL SECURITY;
 -- (jobs/outbound/audit removed)
 
 -- RLS for deleted tables removed
@@ -497,6 +529,67 @@ CREATE POLICY "owners insert integrations" ON integrations
 CREATE POLICY "owners delete integrations" ON integrations
   FOR DELETE USING (
     organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid() AND role IN ('owner','admin','editor'))
+  );
+
+-- tags (org-scoped)
+CREATE POLICY "org members select tags" ON tags
+  FOR SELECT USING (
+    organization_id IN (SELECT organization_id FROM org_members WHERE user_id = auth.uid())
+  );
+CREATE POLICY "editors manage tags" ON tags
+  FOR ALL TO authenticated
+  USING (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
+  )
+  WITH CHECK (
+    organization_id IN (
+      SELECT organization_id FROM org_members 
+      WHERE user_id = auth.uid() AND role IN ('owner','admin','editor')
+    )
+  );
+
+-- session_tags (join limited to same-org sessions and tags)
+CREATE POLICY "org members select session_tags" ON session_tags
+  FOR SELECT USING (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid()
+    )
+    AND tag_id IN (
+      SELECT t.id FROM tags t
+      JOIN org_members om2 ON t.organization_id = om2.organization_id
+      WHERE om2.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "editors manage session_tags" ON session_tags
+  FOR ALL TO authenticated
+  USING (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid() AND om.role IN ('owner','admin','editor')
+    )
+    AND tag_id IN (
+      SELECT t.id FROM tags t
+      JOIN org_members om2 ON t.organization_id = om2.organization_id
+      WHERE om2.user_id = auth.uid() AND om2.role IN ('owner','admin','editor')
+    )
+  )
+  WITH CHECK (
+    session_id IN (
+      SELECT s.id FROM sessions s 
+      JOIN org_members om ON s.organization_id = om.organization_id
+      WHERE om.user_id = auth.uid() AND om.role IN ('owner','admin','editor')
+    )
+    AND tag_id IN (
+      SELECT t.id FROM tags t
+      JOIN org_members om2 ON t.organization_id = om2.organization_id
+      WHERE om2.user_id = auth.uid() AND om2.role IN ('owner','admin','editor')
+    )
   );
 
 -- device_api_keys

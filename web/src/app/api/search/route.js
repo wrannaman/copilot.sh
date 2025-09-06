@@ -83,6 +83,32 @@ export async function POST(req) {
       }
     }
 
+    // Tag filter: if filters.tagIds is an array of tag UUIDs, restrict sessions to those having ALL selected tags
+    if (Array.isArray(filters.tagIds) && filters.tagIds.length > 0) {
+      const { data: sessionTagRows, error: tagJoinError } = await supabase
+        .from('session_tags')
+        .select('session_id, tag_id')
+        .in('session_id', filteredSessionIds)
+        .in('tag_id', filters.tagIds);
+
+      if (!tagJoinError) {
+        // Build map of session_id -> set of matched tag_ids
+        const map = new Map();
+        for (const row of (sessionTagRows || [])) {
+          if (!map.has(row.session_id)) map.set(row.session_id, new Set());
+          map.get(row.session_id).add(row.tag_id);
+        }
+        const required = new Set(filters.tagIds);
+        filteredSessionIds = filteredSessionIds.filter(id => {
+          const have = map.get(id);
+          if (!have) return false;
+          // Require all tags present
+          for (const t of required) if (!have.has(t)) return false;
+          return true;
+        });
+      }
+    }
+
     if (filteredSessionIds.length === 0) {
       return NextResponse.json({
         results: [],

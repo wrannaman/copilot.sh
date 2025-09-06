@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { RotateCcw, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 export default function SessionsPanel({ organizationId }) {
   const [sessions, setSessions] = useState([]);
@@ -24,6 +25,9 @@ export default function SessionsPanel({ organizationId }) {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsSummary, setDetailsSummary] = useState(null);
   const [detailsTranscript, setDetailsTranscript] = useState("");
+  const [availableTags, setAvailableTags] = useState([]);
+  const [sessionTagsMap, setSessionTagsMap] = useState({}); // session_id -> [{id,name}]
+  const [tagInputMap, setTagInputMap] = useState({}); // session_id -> current input value
   const isUnmountedRef = useRef(false);
   const pollTimeoutRef = useRef(null);
   const router = useRouter();
@@ -63,6 +67,119 @@ export default function SessionsPanel({ organizationId }) {
     loadSessions().finally(() => setSessionsLoading(false));
     return () => { /* no-op mount effect cleanup */ };
   }, [organizationId, page, loadSessions]);
+
+  // Load available tags and session tag joins for current page
+  useEffect(() => {
+    const run = async () => {
+      if (!organizationId || sessions.length === 0) { setAvailableTags([]); setSessionTagsMap({}); return; }
+      const supabase = createClient();
+      // org tags
+      const [{ data: tags }] = await Promise.all([
+        supabase.from('tags').select('id,name').eq('organization_id', organizationId).order('name_ci', { ascending: true })
+      ]);
+      setAvailableTags(Array.isArray(tags) ? tags : []);
+      // session tags for this page
+      const sessionIds = sessions.map(s => s.id);
+      const { data: joins } = await supabase
+        .from('session_tags')
+        .select('session_id, tag_id, tags!inner(id,name)')
+        .in('session_id', sessionIds);
+      const map = {};
+      for (const j of (joins || [])) {
+        const sid = j.session_id;
+        if (!map[sid]) map[sid] = [];
+        if (j.tags) map[sid].push({ id: j.tags.id, name: j.tags.name });
+      }
+      setSessionTagsMap(map);
+    };
+    run();
+  }, [organizationId, sessions]);
+
+  async function toggleTag(sessionId, tag) {
+    const supabase = createClient();
+    const tagsForSession = sessionTagsMap[sessionId] || [];
+    const exists = tagsForSession.some(t => t.id === tag.id);
+    if (exists) {
+      // remove
+      const { data } = await supabase
+        .from('session_tags')
+        .select('id')
+        .eq('session_id', sessionId)
+        .eq('tag_id', tag.id)
+        .limit(1)
+        .maybeSingle();
+      if (data?.id) {
+        await supabase.from('session_tags').delete().eq('id', data.id);
+        setSessionTagsMap(prev => ({
+          ...prev,
+          [sessionId]: (prev[sessionId] || []).filter(t => t.id !== tag.id)
+        }));
+      }
+    } else {
+      await supabase.from('session_tags').insert({ session_id: sessionId, tag_id: tag.id });
+      setSessionTagsMap(prev => ({
+        ...prev,
+        [sessionId]: [ ...(prev[sessionId] || []), { id: tag.id, name: tag.name } ]
+      }));
+    }
+  }
+
+  async function createAndAttachTag(sessionId, name) {
+    const clean = String(name || '').trim();
+    if (!clean) return;
+    const supabase = createClient();
+    // try find existing
+    const { data: existing } = await supabase
+      .from('tags')
+      .select('id,name')
+      .eq('organization_id', organizationId)
+      .ilike('name', clean)
+      .limit(1)
+      .maybeSingle();
+    let tagId, tagName;
+    if (existing?.id) {
+      tagId = existing.id; tagName = existing.name;
+    } else {
+      const { data: created, error } = await supabase
+        .from('tags')
+        .insert({ organization_id: organizationId, name: clean })
+        .select('id,name')
+        .single();
+      if (error) return;
+      tagId = created.id; tagName = created.name;
+      setAvailableTags(prev => [{ id: tagId, name: tagName }, ...prev]);
+    }
+    await supabase.from('session_tags').insert({ session_id: sessionId, tag_id: tagId });
+    setSessionTagsMap(prev => ({
+      ...prev,
+      [sessionId]: [ ...(prev[sessionId] || []), { id: tagId, name: tagName } ]
+    }));
+  }
+
+  function setTagInput(sessionId, value) {
+    setTagInputMap(prev => ({ ...prev, [sessionId]: value }));
+  }
+
+  async function commitTagsInput(sessionId, raw) {
+    const text = String(raw || '').trim();
+    if (!text) return;
+    // Split by commas or whitespace/newline; strip leading '#'
+    const parts = text
+      .split(/[,\n]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+      .flatMap(s => s.split(/\s+/))
+      .map(s => s.replace(/^#+/, ''))
+      .filter(Boolean);
+    for (const p of parts) {
+      // Skip duplicates already on session
+      const existing = (sessionTagsMap[sessionId] || []).some(t => t.name.toLowerCase() === p.toLowerCase());
+      if (!existing) {
+        await createAndAttachTag(sessionId, p);
+      }
+    }
+    setTagInput(sessionId, '');
+  }
 
   useEffect(() => {
     return () => {
@@ -311,6 +428,7 @@ export default function SessionsPanel({ organizationId }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Title</TableHead>
+                <TableHead>Tags</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -367,6 +485,45 @@ export default function SessionsPanel({ organizationId }) {
                           {s.title || 'Untitled'}
                         </button>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {(sessionTagsMap[s.id] || []).map((t) => (
+                          <Badge
+                            key={t.id}
+                            variant="outline"
+                            className="cursor-pointer"
+                            onClick={() => toggleTag(s.id, t)}
+                          >
+                            #{t.name}
+                          </Badge>
+                        ))}
+                        <input
+                          className="border rounded px-1 py-0.5 text-xs w-32"
+                          placeholder="add tag"
+                          value={tagInputMap[s.id] || ''}
+                          onChange={(e) => setTagInput(s.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            const val = String(tagInputMap[s.id] || '').trim();
+                            if ((e.key === 'Enter' || e.key === 'Tab' || e.key === ',') && val) {
+                              e.preventDefault();
+                              commitTagsInput(s.id, tagInputMap[s.id]);
+                            } else if (e.key === 'Backspace' && !val) {
+                              // remove last tag quickly
+                              const tags = sessionTagsMap[s.id] || [];
+                              const last = tags[tags.length - 1];
+                              if (last) toggleTag(s.id, last);
+                            }
+                          }}
+                          onPaste={(e) => {
+                            const text = e.clipboardData.getData('text');
+                            if (text && /[,\n\s]/.test(text)) {
+                              e.preventDefault();
+                              commitTagsInput(s.id, text);
+                            }
+                          }}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell>{new Date(s.created_at).toLocaleString()}</TableCell>
                     <TableCell className="capitalize">{s.status}</TableCell>
